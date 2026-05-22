@@ -557,7 +557,8 @@ router.post(
     const ws = await createUserWorkspace(userId);
 
     const hash = await hashPassword(password);
-    await fs.writeFile(path.join(ws.root, "auth.json"), JSON.stringify({ passwordHash: hash }), "utf-8");
+    const { writeUserAuth } = await import("../services/userStore.js");
+    await writeUserAuth(userId, { passwordHash: hash, tokenVersion: 0 });
 
     // profile.json must exist before setUserPointsBudget (which calls ensureUserProfileExists)
     await fs.writeFile(
@@ -729,7 +730,7 @@ router.get(
 
     res.json({
       agentId: SYSTEM_AGENT_ID,
-      workspace: "/root/clawd",
+      workspace: process.cwd(),
       configured: false,
       hasTelegram: false,
       telegramAccountId: undefined,

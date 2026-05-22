@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import { logger } from "./logger.js";
 import { getWorkspace } from "./workspaceService.js";
 import { readState, writeState } from "./stateService.js";
-import { loadStrategyFile } from "./strategyFileService.js";
+import { loadUserStrategy } from "./strategyAccess.js";
 import { dualWriteStrategy } from "./strategyExportService.js";
 import { StrategySchema } from "../schemas/strategy.js";
 
@@ -81,7 +81,7 @@ export async function runConditionCheck(userId: string): Promise<ConditionReport
 
   for (const ticker of tickerDirs) {
     const strategyPath = ws.strategyFile(ticker);
-    const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+    const loaded = await loadUserStrategy(ws.userId, strategyPath, { repair: true, tickerHint: ticker });
     if (!loaded.valid || !loaded.strategy) {
       errors.push({ ticker, error: loaded.errors?.join("; ") ?? "Strategy validation failed" });
       continue;
@@ -204,7 +204,7 @@ export async function markCatalystTriggered(
 ): Promise<void> {
   const ws = await getWorkspace(userId);
   const strategyPath = ws.strategyFile(ticker);
-  const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+  const loaded = await loadUserStrategy(userId, strategyPath, { repair: true, tickerHint: ticker });
   if (!loaded.valid || !loaded.strategy) {
     throw new Error(`Invalid strategy for ${ticker}: ${(loaded.errors ?? []).join("; ")}`);
   }

@@ -374,31 +374,3 @@ export async function computeFifoForTicker(
   };
 }
 
-/**
- * Replay synthetic opening lots from migration_archive into position_transactions.
- * Called by the Phase 7 replay script.
- */
-export async function replayOpeningLot(input: {
-  userId: string;
-  ticker: string;
-  exchange: string;
-  account: string;
-  shares: number;
-  unitAvgBuyPrice: number;
-  unitCurrency: string;
-  transactionAt: string;
-}): Promise<TransactionRecord> {
-  return insertTransaction({
-    userId: input.userId,
-    ticker: input.ticker,
-    exchange: input.exchange,
-    account: input.account,
-    transactionType: "transfer_in",
-    quantity: input.shares,
-    unitPrice: input.unitAvgBuyPrice,
-    unitCurrency: input.unitCurrency,
-    feesIls: 0,
-    transactionAt: input.transactionAt,
-    note: "synthetic_opening_lot",
-  });
-}

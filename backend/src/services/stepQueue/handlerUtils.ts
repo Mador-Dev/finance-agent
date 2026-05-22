@@ -2,15 +2,24 @@ import { promises as fs } from "fs";
 import type { z } from "zod";
 import type { UserWorkspace } from "../../middleware/userIsolation.js";
 import { PortfolioFileSchema } from "../../schemas/portfolio.js";
+import { readPortfolio } from "../portfolioStore.js";
 import type { Exchange } from "../../types/index.js";
 import { getPrice, getPriceHistory, getUsdIlsRate } from "../priceService.js";
 import { eventStore } from "../eventStore.js";
 import { atomicWriteJson } from "./artifactIO.js";
+import { readWorkspaceJson, readWorkspaceText } from "../workspaceDataIO.js";
+import { readStrategy } from "../strategyStore.js";
+import { renderStrategyJson } from "../strategyExportService.js";
 import { callWithInstructor } from "./instructorClient.js";
 import type { BuiltPrompt, StepHandler, StepInputs, ValidationResult } from "./handlers.js";
 import type { ClaimedStepWorkItem, ModelTier, StepKind } from "./types.js";
 
-export async function readJsonIfExists(filePath: string): Promise<unknown | null> {
+export async function readJsonIfExists(
+  userId: string,
+  filePath: string
+): Promise<unknown | null> {
+  const fromDb = await readWorkspaceJson(userId, filePath);
+  if (fromDb !== null) return fromDb;
   try {
     return JSON.parse(await fs.readFile(filePath, "utf-8")) as unknown;
   } catch {
@@ -18,7 +27,13 @@ export async function readJsonIfExists(filePath: string): Promise<unknown | null
   }
 }
 
-export async function readTextIfExists(filePath: string, maxChars = 4000): Promise<string | null> {
+export async function readTextIfExists(
+  userId: string,
+  filePath: string,
+  maxChars = 4000
+): Promise<string | null> {
+  const fromDb = await readWorkspaceText(userId, filePath, maxChars);
+  if (fromDb !== null) return fromDb;
   try {
     return (await fs.readFile(filePath, "utf-8")).slice(0, maxChars);
   } catch {
@@ -34,8 +49,9 @@ export async function getPortfolioPosition(ws: UserWorkspace, ticker: string): P
   unitCurrency: string;
   account: string;
 } | null> {
-  const raw = await fs.readFile(ws.portfolioFile, "utf-8");
-  const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+  const stored = await readPortfolio(ws.userId);
+  if (!stored) return null;
+  const portfolio = PortfolioFileSchema.parse(stored);
   for (const [account, positions] of Object.entries(portfolio.accounts)) {
     const position = positions.find((item) => item.ticker === ticker);
     if (position) return { ...position, account };
@@ -52,8 +68,10 @@ export interface PortfolioContext {
 }
 
 export async function getPortfolioContext(ws: UserWorkspace, ticker: string): Promise<PortfolioContext> {
-  const raw = await fs.readFile(ws.portfolioFile, "utf-8");
-  const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+  const stored = await readPortfolio(ws.userId);
+  const portfolio = PortfolioFileSchema.parse(
+    stored ?? { meta: { currency: "ILS", transactionFeeILS: 0, note: "" }, accounts: {} }
+  );
   const usdIlsRate = await getUsdIlsRate();
   const positions = Object.values(portfolio.accounts).flat();
   const valueILS = (position: typeof positions[number]) => {
@@ -88,8 +106,8 @@ export async function gatherCommonInputs(step: ClaimedStepWorkItem, ws: UserWork
       price: null,
       usdIlsRate: 3.7,
       portfolioContext,
-      currentStrategy: await readJsonIfExists(ws.strategyFile(step.ticker)),
-      userProfile: await readTextIfExists(ws.userMdFile),
+      currentStrategy: await loadStrategySnapshot(ws.userId, step.ticker, ws.strategyFile(step.ticker)),
+      userProfile: await readTextIfExists(ws.userId, ws.userMdFile),
     };
   }
   const usdIlsRate = await getUsdIlsRate();
@@ -100,15 +118,25 @@ export async function gatherCommonInputs(step: ClaimedStepWorkItem, ws: UserWork
     price,
     usdIlsRate,
     portfolioContext,
-    currentStrategy: await readJsonIfExists(ws.strategyFile(step.ticker)),
-    userProfile: await readTextIfExists(ws.userMdFile),
+    currentStrategy: await loadStrategySnapshot(ws.userId, step.ticker, ws.strategyFile(step.ticker)),
+    userProfile: await readTextIfExists(ws.userId, ws.userMdFile),
   };
+}
+
+async function loadStrategySnapshot(
+  userId: string,
+  ticker: string,
+  filePath: string
+): Promise<unknown | null> {
+  const record = await readStrategy(userId, ticker).catch(() => null);
+  if (record) return renderStrategyJson(record);
+  return readJsonIfExists(userId, filePath);
 }
 
 export async function gatherAnalystArtifacts(ws: UserWorkspace, ticker: string): Promise<Record<string, unknown>> {
   const names = ["fundamentals", "technical", "sentiment", "macro", "risk"];
   const entries = await Promise.all(
-    names.map(async (name) => [name, await readJsonIfExists(ws.reportFile(ticker, name))] as const)
+    names.map(async (name) => [name, await readJsonIfExists(ws.userId, ws.reportFile(ticker, name))] as const)
   );
   return Object.fromEntries(entries);
 }
@@ -122,7 +150,7 @@ export async function gatherTechnicalData(step: ClaimedStepWorkItem, ws: UserWor
 export function persistReportArtifact<T>(analyst: string) {
   return async (artifact: T, ws: UserWorkspace, step: ClaimedStepWorkItem): Promise<string> => {
     const filePath = ws.reportFile(step.ticker, analyst);
-    await atomicWriteJson(filePath, artifact);
+    await atomicWriteJson(ws.userId, filePath, artifact);
     return filePath;
   };
 }

@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import type { UserWorkspace } from "../../middleware/userIsolation.js";
 import { listPortfolioTickers } from "../baselineCoverageService.js";
 import { listTrackedAssets } from "../trackedAssetService.js";
-import { loadStrategyFile } from "../strategyFileService.js";
+import { loadUserStrategy } from "../strategyAccess.js";
 import { readStrategy } from "../strategyStore.js";
 import { isApplicationDatabaseConfigured } from "../../db/applicationDataSource.js";
 import { getEnabledStepKinds } from "../analystConfigService.js";
@@ -80,7 +80,7 @@ async function strategyRequiresFullDeepDive(
     return true;
   }
 
-  const loaded = await loadStrategyFile(ws.strategyFile(ticker), {
+  const loaded = await loadUserStrategy(ws.userId, ws.strategyFile(ticker), {
     repair: false,
     tickerHint: ticker,
   });

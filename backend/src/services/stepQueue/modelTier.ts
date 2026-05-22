@@ -79,6 +79,10 @@ export function isModelTier(value: unknown): value is ModelTier {
 }
 
 export async function readUserModelTier(userId: string): Promise<ModelTier> {
+  const { getUserModelTier } = await import("../userStore.js");
+  const fromDb = await getUserModelTier(userId);
+  if (isModelTier(fromDb)) return fromDb;
+
   try {
     const raw = await fs.readFile(path.join(USERS_DIR, userId, "profile.json"), "utf-8");
     const parsed = JSON.parse(raw) as { modelTier?: unknown };
@@ -89,14 +93,8 @@ export async function readUserModelTier(userId: string): Promise<ModelTier> {
 }
 
 export async function writeUserModelTier(userId: string, modelTier: ModelTier): Promise<ModelTier> {
-  const profilePath = path.join(USERS_DIR, userId, "profile.json");
-  const raw = await fs.readFile(profilePath, "utf-8");
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-  await fs.writeFile(
-    profilePath,
-    JSON.stringify({ ...parsed, modelTier }, null, 2),
-    "utf-8"
-  );
+  const { setUserModelTier } = await import("../userStore.js");
+  await setUserModelTier(userId, modelTier);
   return modelTier;
 }
 

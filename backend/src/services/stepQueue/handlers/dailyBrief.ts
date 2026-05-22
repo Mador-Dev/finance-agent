@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { UserWorkspace } from "../../../middleware/userIsolation.js";
-import { loadStrategyFile } from "../../strategyFileService.js";
+import { loadUserStrategy } from "../../strategyAccess.js";
 import { findActiveSnooze } from "../../snoozeStore.js";
 import { admitOrReuseStepQueueJob } from "../admission.js";
 import { ensurePointsBudgetAvailable } from "../../pointsBudgetService.js";
@@ -59,7 +59,7 @@ async function computeTrackingSignals(
   const signals: string[] = [];
   const now = Date.now();
 
-  const loaded = await loadStrategyFile(ws.strategyFile(ticker), {
+  const loaded = await loadUserStrategy(ws.userId, ws.strategyFile(ticker), {
     repair: false,
     tickerHint: ticker,
   });
@@ -140,7 +140,7 @@ export const trackingEvaluateHandler: StepHandler<TrackingEvaluateResult> = {
 
   async persistArtifact(artifact, ws, step) {
     const filePath = path.join(ws.reportsDir, step.ticker, "tracking_evaluate.json");
-    await atomicWriteJson(filePath, artifact);
+    await atomicWriteJson(step.userId, filePath, artifact);
     return filePath;
   },
 };
@@ -153,7 +153,7 @@ export async function executeTrackingEvaluateStep(
   step: ClaimedStepWorkItem,
   ws: UserWorkspace
 ): Promise<TrackingEvaluateResult> {
-  const loaded = await loadStrategyFile(ws.strategyFile(step.ticker), {
+  const loaded = await loadUserStrategy(ws.userId, ws.strategyFile(step.ticker), {
     repair: false,
     tickerHint: step.ticker,
   });
@@ -210,6 +210,6 @@ export async function executeTrackingEvaluateStep(
   };
 
   const filePath = path.join(ws.reportsDir, step.ticker, "tracking_evaluate.json");
-  await atomicWriteJson(filePath, result);
+  await atomicWriteJson(step.userId, filePath, result);
   return result;
 }

@@ -1,4 +1,3 @@
-import { promises as fs } from "fs";
 import { PROXY_BASE_URL, generateProxyKey, toProxyModel } from "./llmProxy.js";
 import { getProfile, getUserProfile } from "./profileService.js";
 import { searchTickerContext } from "./explorationService.js";
@@ -55,12 +54,10 @@ function extractJsonObject(text: string): string | null {
 }
 
 async function getUserPreferenceSummary(userId: string): Promise<string> {
-  try {
-    const raw = await fs.readFile(`/root/clawd/users/${userId}/USER.md`, "utf-8");
-    return raw.slice(0, 1500);
-  } catch {
-    return "No explicit investor profile was provided. Assume disciplined portfolio management and risk-aware behavior.";
-  }
+  const { readPersonaMd } = await import("./personaStore.js");
+  const raw = await readPersonaMd(userId);
+  if (raw) return raw.slice(0, 1500);
+  return "No explicit investor profile was provided. Assume disciplined portfolio management and risk-aware behavior.";
 }
 
 async function getQuickCheckModel(userId: string): Promise<string | null> {

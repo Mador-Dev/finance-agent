@@ -93,8 +93,13 @@ export function buildReadTools(_ctx: ToolContext): ToolDefinition[] {
       handler: async (_args, toolCtx) => {
         const t0 = Date.now();
         try {
-          const portfolioPath = path.join(USERS_DIR, toolCtx.userId, "data", "portfolio.json");
-          const raw = await fs.readFile(portfolioPath, "utf-8");
+          const { readPortfolio } = await import("../../portfolioStore.js");
+          const stored = await readPortfolio(toolCtx.userId);
+          if (!stored) {
+            await writeToolCallAudit(toolCtx, "getPortfolio", {}, "success", Date.now() - t0);
+            return { status: "success", data: { totalILS: 0, usdIlsRate: 0, positions: [] } };
+          }
+          const raw = JSON.stringify(stored);
           const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
           const usdIlsRate = await getUsdIlsRate();
           const allPositions = Object.entries(portfolio.accounts).flatMap(([account, positions]) =>

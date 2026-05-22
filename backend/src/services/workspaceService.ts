@@ -8,6 +8,9 @@ import type { UserWorkspace } from "../middleware/userIsolation.js";
 import type { PortfolioStateData, PositionGuidance } from "../types/index.js";
 import { resolveConfiguredPath } from "./paths.js";
 import { readState, writeState } from "./stateService.js";
+import { writePortfolio } from "./portfolioStore.js";
+import { ensureUserRecord } from "./userStore.js";
+import { writePersonaMd } from "./personaStore.js";
 import { buildStrategyMetadata } from "./strategyBaselineService.js";
 
 const USERS_DIR = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
@@ -46,16 +49,7 @@ async function safeReadJson<T>(filePath: string): Promise<T | null> {
 }
 
 async function loadWorkspaceTemplateManifest(): Promise<WorkspaceTemplateManifest> {
-  // Retired OpenClaw-managed workspace files should not be provisioned into
-  // new user workspaces, even if an older custom manifest still references them.
-  const RETIRED_SHARED_FILES = new Set([
-    "SOUL.md",
-    "AGENTS.md",
-    "HEARTBEAT.md",
-    "RESET.md",
-    "IDENTITY.md",
-    "TOOLS.md",
-  ]);
+  const RETIRED_SHARED_FILES = new Set<string>();
 
   const fallback: WorkspaceTemplateManifest = {
     sharedFiles: [],
@@ -141,61 +135,36 @@ async function ensureExploratoryTickerWorkspace(
 }
 
 export async function workspaceExists(userId: string): Promise<boolean> {
-  const wsRoot = path.join(USERS_DIR, userId);
-  try {
-    await fs.access(wsRoot);
-    return true;
-  } catch {
-    return false;
-  }
+  const { userExists } = await import("./userStore.js");
+  return userExists(userId);
 }
 
 export async function getWorkspace(userId: string): Promise<UserWorkspace> {
-  const wsRoot = path.join(USERS_DIR, userId);
-  try {
-    await fs.access(wsRoot);
-  } catch {
+  const { userExists } = await import("./userStore.js");
+  if (!(await userExists(userId))) {
     throw new WorkspaceNotFoundError(userId);
   }
   return buildWorkspace(userId, USERS_DIR);
 }
 
 export async function listWorkspaceUserIds(): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(USERS_DIR, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
+  const { listUserIds } = await import("./userStore.js");
+  return listUserIds();
 }
 
 export async function createUserWorkspace(
   userId: string
 ): Promise<UserWorkspace> {
-  const wsRoot = path.join(USERS_DIR, userId);
-  try {
-    await fs.access(wsRoot);
+  const { userExists } = await import("./userStore.js");
+  if (await userExists(userId)) {
     throw new Error(`Workspace already exists for user: ${userId}`);
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw err;
-    }
   }
 
   const ws = buildWorkspace(userId, USERS_DIR);
   const templateManifest = await loadWorkspaceTemplateManifest();
 
-  // Phase 3: data/triggers/ is retired (B1.3). Only create the directories
-  // that the step-queue path actually needs.
-  await fs.mkdir(ws.jobsDir, { recursive: true });
-  await fs.mkdir(ws.snapshotsDir, { recursive: true });
-  await fs.mkdir(ws.tickersDir, { recursive: true });
-  await fs.mkdir(ws.reportsDir, { recursive: true });
-
-  const initialState: PortfolioStateData = {
-    userId,
+  await ensureUserRecord(userId, { displayName: userId });
+  await writeState(userId, {
     state: "INCOMPLETE",
     lastFullReportAt: null,
     lastDailyAt: null,
@@ -206,85 +175,32 @@ export async function createUserWorkspace(
       positionGuidanceStatus: "not_started",
       positionGuidance: {},
     },
-  };
-  await fs.writeFile(
-    ws.stateFile,
-    JSON.stringify(initialState, null, 2),
-    "utf-8"
-  );
+  });
 
-  const config = { modelProfile: "testing", plan: "pro" };
-  await fs.writeFile(
-    ws.configFile,
-    JSON.stringify(config, null, 2),
-    "utf-8"
-  );
+  let personaMd = [
+    "# Investor Profile",
+    `# Generated: ${new Date().toISOString()}`,
+    "",
+    "## Risk profile",
+    "riskTolerance: medium",
+  ].join("\n");
 
-  // Render templated files from the canonical shared user workspace template.
   for (const templateFile of templateManifest.templatedFiles) {
+    if (templateFile.target !== "USER.md") continue;
     try {
-      const templatePath = path.join(
-        USER_WORKSPACE_TEMPLATE_DIR,
-        templateFile.source
-      );
+      const templatePath = path.join(USER_WORKSPACE_TEMPLATE_DIR, templateFile.source);
       const template = await fs.readFile(templatePath, "utf-8");
-      const rendered = renderWorkspaceTemplate(template, {
+      personaMd = renderWorkspaceTemplate(template, {
         "[DISPLAY_NAME]": userId,
         "[DATE]": new Date().toISOString(),
       });
-      await fs.writeFile(
-        path.join(ws.root, templateFile.target),
-        rendered,
-        "utf-8"
-      );
     } catch (err) {
-      if (templateFile.target !== "USER.md") {
-        logger.warn(
-          `Could not render ${templateFile.target} from workspace template: ${err}`
-        );
-        continue;
-      }
-
-      const stub = [
-        "# Investor Profile",
-        `# Generated: ${new Date().toISOString()}`,
-        "# Edit this file to customize agent behavior.",
-        "",
-        "## Risk profile",
-        "riskTolerance: medium",
-        "",
-        "## Investment focus",
-        "notes: |",
-        "  Fill in your investment thesis and preferences.",
-      ].join("\n");
-      await fs.writeFile(ws.userMdFile, stub, "utf-8");
-      logger.warn(`Fell back to stub USER.md for ${userId}`);
+      logger.warn(`Could not render USER.md template for ${userId}: ${err}`);
     }
   }
 
-  // Copy canonical shared workspace files into the user workspace.
-  for (const file of templateManifest.sharedFiles) {
-    try {
-      await fs.copyFile(
-        path.join(USER_WORKSPACE_TEMPLATE_DIR, file),
-        path.join(ws.root, file)
-      );
-    } catch (err) {
-      logger.warn(`Could not copy ${file} to user workspace: ${err}`);
-    }
-  }
-
-  // Create empty files declared by the template manifest (filtered in Phase 3).
-  for (const file of templateManifest.emptyFiles) {
-    try {
-      await fs.writeFile(path.join(ws.root, file), "", { flag: "wx" });
-    } catch { /* already exists */ }
-  }
-
-  // Phase 3: skills symlink is retired (B2.1). New workspaces do not get it.
-  // Existing workspaces have it removed by cleanupOpenClawWorkspaces.ts.
-
-  logger.info(`Created workspace for user: ${userId}`);
+  await writePersonaMd(userId, personaMd);
+  logger.info(`Provisioned Postgres-backed user record: ${userId}`);
   return ws;
 }
 
@@ -301,11 +217,7 @@ export async function saveUserPortfolio(
     );
   }
 
-  await fs.writeFile(
-    ws.portfolioFile,
-    JSON.stringify(parsed.data, null, 2),
-    "utf-8"
-  );
+  await writePortfolio(userId, parsed.data);
 
   const currentState = await readState(userId);
   const validTickers = new Set(
@@ -358,8 +270,10 @@ export async function startUserBootstrap(
 ): Promise<{ totalPositions: number }> {
   const ws = await getWorkspace(userId);
   const currentState = await readState(userId);
-  const rawPortfolio = await fs.readFile(ws.portfolioFile, "utf-8");
-  const portfolio = PortfolioFileSchema.parse(JSON.parse(rawPortfolio));
+  const { readPortfolio } = await import("./portfolioStore.js");
+  const stored = await readPortfolio(userId);
+  if (!stored) throw new Error("portfolio not found");
+  const portfolio = PortfolioFileSchema.parse(stored);
 
   // Bootstrap strategy/report state is keyed by ticker, so dedupe holdings across accounts.
   const uniquePositions = new Map<string, { ticker: string; exchange: string }>();
@@ -439,8 +353,9 @@ export async function reconcileWorkspaceIntegrity(
     changed: false,
   };
 
-  const portfolio = await safeReadJson<object>(ws.portfolioFile);
-  const parsedPortfolio = portfolio ? PortfolioFileSchema.safeParse(portfolio) : null;
+  const { readPortfolio } = await import("./portfolioStore.js");
+  const stored = await readPortfolio(userId).catch(() => null);
+  const parsedPortfolio = stored ? PortfolioFileSchema.safeParse(stored) : null;
   if (!parsedPortfolio?.success) {
     return result;
   }
@@ -533,28 +448,29 @@ export async function validateWorkspaceIntegrity(
     return { userId, checkedAt, valid: false, errors, warnings };
   }
 
-  const portfolio = await safeReadJson<object>(ws.portfolioFile);
+  const { readPortfolio } = await import("./portfolioStore.js");
+  const portfolio = await readPortfolio(userId).catch(() => null);
   if (!portfolio) {
-    errors.push("portfolio.json missing or invalid");
+    errors.push("portfolio missing or invalid in database");
   } else {
     const pfResult = PortfolioFileSchema.safeParse(portfolio);
     if (!pfResult.success) {
       errors.push(
-        `portfolio.json schema error: ${pfResult.error.errors.map((e) => e.message).join("; ")}`
+        `portfolio schema error: ${pfResult.error.errors.map((e) => e.message).join("; ")}`
       );
     }
   }
 
-  const state = await safeReadJson<object>(ws.stateFile);
-  if (!state) {
-    errors.push("state.json missing");
-  } else {
+  try {
+    const state = await readState(userId);
     const stResult = PortfolioStateSchema.safeParse(state);
     if (!stResult.success) {
       errors.push(
-        `state.json schema error: ${stResult.error.errors.map((e) => e.message).join("; ")}`
+        `user lifecycle schema error: ${stResult.error.errors.map((e) => e.message).join("; ")}`
       );
     }
+  } catch (err) {
+    errors.push(`user state unreadable: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const portfolioTickers = new Set<string>();
@@ -579,7 +495,7 @@ export async function validateWorkspaceIntegrity(
   for (const ticker of tickerDirs) {
     if (!portfolioTickers.has(ticker)) {
       warnings.push(
-        `tickers/${ticker}/ exists but ticker not in portfolio.json`
+        `tickers/${ticker}/ exists but ticker not in portfolio`
       );
     }
   }

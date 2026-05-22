@@ -1,14 +1,11 @@
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { promises as fs } from "fs";
-import path from "path";
-import { resolveConfiguredPath } from "../services/paths.js";
 import { validateSession } from "../services/impersonationService.js";
+import { getTokenVersion } from "../services/userStore.js";
 
 const JWT_SECRET  = process.env["JWT_SECRET"] ?? "changeme";
 const TOKEN_EXPIRY = "7d";
-const USERS_DIR   = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
 
 export interface AuthenticatedRequest extends Request {
   userId?: string;
@@ -82,13 +79,9 @@ export function authMiddleware(
   }
 
   // --- Normal token path ---
-  const authFile = path.resolve(USERS_DIR, payload.userId, "auth.json");
-  fs.readFile(authFile, "utf-8")
-    .then((raw) => {
-      const data = JSON.parse(raw) as { tokenVersion?: number };
-      const storedVersion = data.tokenVersion ?? 0;
-      const tokenVersion  = payload.tokenVersion ?? 0;
-
+  getTokenVersion(payload.userId)
+    .then((storedVersion) => {
+      const tokenVersion = payload.tokenVersion ?? 0;
       if (tokenVersion !== storedVersion) {
         res.status(401).json({ error: "session_invalidated" });
         return;
@@ -97,7 +90,6 @@ export function authMiddleware(
       next();
     })
     .catch(() => {
-      // File read error → fail open (don't block on infra issues)
       res.locals["userId"] = payload.userId;
       next();
     });

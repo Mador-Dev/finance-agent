@@ -1,3 +1,7 @@
+-- Portfolio Assistant schema (idempotent).
+-- Append new statements here; backend runs this file once on startup (see docs/ARCHITECTURE.md).
+-- Use IF NOT EXISTS / ADD COLUMN IF NOT EXISTS so re-runs are safe.
+
 CREATE TABLE IF NOT EXISTS llm_requests (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(128) NOT NULL,
@@ -402,19 +406,6 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_log_target_at
   WHERE target_user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action_at
   ON admin_audit_log (action_type, occurred_at DESC);
-
--- §4.14 migration_archive — archives every destructive migration step (P2.2).
-CREATE TABLE IF NOT EXISTS migration_archive (
-  id              UUID PRIMARY KEY,
-  user_id         VARCHAR(64) NOT NULL,
-  source_path     VARCHAR(512) NOT NULL,
-  reason          VARCHAR(64) NOT NULL,
-  payload         JSONB NOT NULL,
-  archived_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_migration_archive_user_archived
-  ON migration_archive (user_id, archived_at DESC);
-
 
 -- §4.15 feature_flags — gates every new code path; values held as JSONB (P3.1, P3.2).
 -- Spec uses `PRIMARY KEY (flag_name, COALESCE(scope_user_id, ''))`; Postgres does
@@ -822,3 +813,89 @@ CREATE INDEX IF NOT EXISTS idx_imp_sessions_active
 CREATE INDEX IF NOT EXISTS idx_imp_sessions_expiry
   ON impersonation_sessions (expires_at)
   WHERE revoked_at IS NULL;
+
+-- ============================================================================
+-- EC2 / portable deployment — retire per-user JSON product state (M001)
+-- ============================================================================
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS lifecycle JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS plan VARCHAR(16) NOT NULL DEFAULT 'pro'
+    CHECK (plan IN ('free', 'pro', 'enterprise'));
+
+-- Portfolio holdings (replaces users/<id>/data/portfolio.json).
+CREATE TABLE IF NOT EXISTS user_portfolios (
+  user_id     VARCHAR(64) PRIMARY KEY,
+  body        JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT fk_user_portfolios_user FOREIGN KEY (user_id)
+    REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- Per-user control banners/restrictions (replaces users/<id>/control.json).
+CREATE TABLE IF NOT EXISTS user_control (
+  user_id     VARCHAR(64) PRIMARY KEY,
+  body        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT fk_user_control_user FOREIGN KEY (user_id)
+    REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- System-wide lock/broadcast (replaces data/system-control.json).
+CREATE TABLE IF NOT EXISTS system_control (
+  id          INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  body        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO system_control (id, body)
+VALUES (1, '{}'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
+-- Support inbox (replaces data/support-messages.json).
+CREATE TABLE IF NOT EXISTS support_messages (
+  id          VARCHAR(64) PRIMARY KEY,
+  user_id     VARCHAR(64) NOT NULL,
+  subject     VARCHAR(256) NOT NULL,
+  message     TEXT NOT NULL,
+  source      VARCHAR(32) NOT NULL,
+  page        VARCHAR(128),
+  status      VARCHAR(16) NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'in_progress', 'closed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_support_messages_status_created
+  ON support_messages (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_messages_user
+  ON support_messages (user_id, created_at DESC);
+
+-- Investor profile prompt (replaces users/<id>/USER.md).
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS persona_md TEXT;
+
+-- Analyst report JSON and orchestration blobs (replaces users/<id>/data/reports/*).
+CREATE TABLE IF NOT EXISTS report_artifacts (
+  user_id      VARCHAR(64) NOT NULL,
+  ticker       VARCHAR(32) NOT NULL,
+  artifact_key VARCHAR(64) NOT NULL,
+  payload      JSONB NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, ticker, artifact_key),
+  CONSTRAINT fk_report_artifacts_user FOREIGN KEY (user_id)
+    REFERENCES users(user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_report_artifacts_user_updated
+  ON report_artifacts (user_id, updated_at DESC);
+
+-- Job/orchestration state (replaces full_report_state.json, deep_dive_state.json, etc.).
+CREATE TABLE IF NOT EXISTS orchestration_state (
+  user_id    VARCHAR(64) NOT NULL,
+  state_key  VARCHAR(128) NOT NULL,
+  payload    JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, state_key),
+  CONSTRAINT fk_orchestration_state_user FOREIGN KEY (user_id)
+    REFERENCES users(user_id) ON DELETE CASCADE
+);

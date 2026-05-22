@@ -61,9 +61,7 @@ export function createApp(): Express {
   // Admin routes — have their own X-Admin-Key auth, no JWT needed
   app.use("/api/admin", adminRoutes);
 
-  // Phase 3: LLM proxy route removed — no agent runtime calls it after OpenClaw retirement.
-  // services/llmProxy.ts now only retains temporary advisor routing helpers used by
-  // advisorLlmService.ts; it no longer backs an Express route.
+  // LLM proxy route removed; llmProxy.ts retains advisor routing helpers for advisorLlmService.ts.
 
   // Onboarding routes — init doesn't need JWT, portfolio/status do
   // Mounted here so it can have its own auth handling per-route

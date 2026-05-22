@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import type { Verdict, Confidence } from "../types/index.js";
-import { loadStrategyFile } from "../services/strategyFileService.js";
+import { loadUserStrategy } from "../services/strategyAccess.js";
 
 const router = Router();
 
@@ -66,7 +66,7 @@ router.get(
 
     for (const ticker of tickerDirs) {
       const strategyPath = ws.strategyFile(ticker);
-      const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+      const loaded = await loadUserStrategy(ws.userId, strategyPath, { repair: true, tickerHint: ticker });
       if (!loaded.valid || !loaded.strategy) {
         continue;
       }

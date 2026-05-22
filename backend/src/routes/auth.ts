@@ -1,6 +1,4 @@
 import { Router } from "express";
-import { promises as fs } from "fs";
-import path from "path";
 import { authLimiter } from "../middleware/rateLimit.js";
 import {
   generateToken,
@@ -9,6 +7,7 @@ import {
 } from "../middleware/auth.js";
 import { guardUserMessage } from "../services/sanitizerService.js";
 import { createUserWorkspace } from "../services/workspaceService.js";
+import { readUserAuth, userExists, writeUserAuth } from "../services/userStore.js";
 
 const router = Router();
 
@@ -32,14 +31,8 @@ router.post(
       return;
     }
 
-    const USERS_DIR = process.env["USERS_DIR"] ?? "../users";
-    const authFile = path.join(USERS_DIR, userId, "auth.json");
-
-    let authData: { passwordHash: string; tokenVersion?: number };
-    try {
-      const raw = await fs.readFile(authFile, "utf-8");
-      authData = JSON.parse(raw);
-    } catch {
+    const authData = await readUserAuth(userId);
+    if (!authData) {
       res.status(401).json({ error: "invalid credentials" });
       return;
     }
@@ -50,8 +43,7 @@ router.post(
       return;
     }
 
-    // Read tokenVersion from auth.json (default 0 if missing — backward compat)
-    const tokenVersion = authData.tokenVersion ?? 0;
+    const tokenVersion = authData.tokenVersion;
     const token = generateToken(userId, tokenVersion);
     res.json({ token, userId });
   }
@@ -84,23 +76,14 @@ router.post("/register", async (req, res) => {
     return;
   }
 
-  const USERS_DIR = process.env["USERS_DIR"] ?? "../users";
-  const wsRoot = path.join(USERS_DIR, userId);
-  try {
-    await fs.access(wsRoot);
+  if (await userExists(userId)) {
     res.status(409).json({ error: "user already exists" });
     return;
-  } catch {
-    // doesn't exist — good
   }
 
   await createUserWorkspace(userId);
   const hash = await hashPassword(password);
-  await fs.writeFile(
-    path.join(wsRoot, "auth.json"),
-    JSON.stringify({ passwordHash: hash }),
-    "utf-8"
-  );
+  await writeUserAuth(userId, { passwordHash: hash, tokenVersion: 0 });
 
   res.status(201).json({ userId, created: true });
 });
@@ -128,18 +111,14 @@ router.post("/change-password", async (req, res) => {
     return;
   }
 
-  const USERS_DIR = process.env["USERS_DIR"] ?? "../users";
-  const authFile = path.join(USERS_DIR, userId, "auth.json");
-
-  try {
-    await fs.access(authFile);
-  } catch {
+  const existing = await readUserAuth(userId);
+  if (!existing) {
     res.status(404).json({ error: "user not found" });
     return;
   }
 
   const hash = await hashPassword(newPassword);
-  await fs.writeFile(authFile, JSON.stringify({ passwordHash: hash }), "utf-8");
+  await writeUserAuth(userId, { ...existing, passwordHash: hash });
   res.json({ changed: true });
 });
 

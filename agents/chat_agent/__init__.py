@@ -1,3 +1,3 @@
-from agents.chat_agent.agent import ChatAgentRunner
+from agents.chat_agent.agent import build_chat_agent, invoke_chat_agent
 
-__all__ = ["ChatAgentRunner"]
+__all__ = ["build_chat_agent", "invoke_chat_agent"]

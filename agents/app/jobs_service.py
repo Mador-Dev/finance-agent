@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agents.analysis_agent import StrategyAnalysisRunner
+from agents.analysis_agent import invoke_analysis_agent
 from agents.app.config import get_settings
 from agents.app.runtime_store import RuntimeStore
 from agents.app.schemas import (
@@ -27,7 +27,6 @@ class JobsService:
         self.settings = get_settings()
         self.runtime = RuntimeStore()
         self.workspace_store = WorkspaceStore()
-        self.runner = StrategyAnalysisRunner(self.settings)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -111,7 +110,8 @@ class JobsService:
             self.runtime.write_job(ws, job)
 
             try:
-                strategy = await self.runner.run(
+                strategy = await invoke_analysis_agent(
+                    self.settings,
                     action=job.action,
                     ticker=ticker,
                     position_context=lookup[ticker],

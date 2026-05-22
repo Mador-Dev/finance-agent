@@ -5,7 +5,8 @@ import type { UserWorkspace } from "../middleware/userIsolation.js";
 import { getSystemControl, getUserControl } from "./controlService.js";
 import { createJob, getJob, listJobs, updateJob } from "./jobService.js";
 import type { Job, JobAction, JobSource, RateLimits } from "../types/index.js";
-import { DEFAULT_RATE_LIMITS } from "../types/index.js";
+import { getUserRateLimits } from "./userStore.js";
+import { listRecentJobsForRateLimit, isJobStoreAvailable } from "./jobStore.js";
 import { setUserProfile, getUserProfileStatus } from "./profileService.js";
 import { runQuickCheckJob } from "./quickCheckService.js";
 import { runDailyBriefJob } from "./dailyBriefService.js";
@@ -102,38 +103,37 @@ async function checkRateLimit(
   ws: UserWorkspace,
   action: JobAction
 ): Promise<{ allowed: boolean; reason?: string }> {
-  let limits: RateLimits = DEFAULT_RATE_LIMITS;
-  try {
-    const raw = await fs.readFile(path.join(ws.root, "profile.json"), "utf-8");
-    const profile = JSON.parse(raw) as { rateLimits?: Partial<RateLimits> };
-    if (profile.rateLimits) {
-      limits = { ...DEFAULT_RATE_LIMITS, ...profile.rateLimits };
-    }
-  } catch {}
+  const limits = await getUserRateLimits(ws.userId);
 
   const limit = limits[action as keyof RateLimits];
   if (!limit) return { allowed: true };
 
   const cutoff = new Date(Date.now() - limit.periodHours * 3600 * 1000).toISOString();
-  let jobs: Array<{ action: string; status: string; triggered_at: string }> = [];
-  try {
-    const files = await fs.readdir(ws.jobsDir);
-    await Promise.all(
-      files
-        .filter((file) => file.endsWith(".json"))
-        .map(async (file) => {
-          try {
-            jobs.push(
-              JSON.parse(await fs.readFile(path.join(ws.jobsDir, file), "utf-8")) as {
-                action: string;
-                status: string;
-                triggered_at: string;
-              }
-            );
-          } catch {}
-        })
-    );
-  } catch {}
+  let jobs: Array<{ action: string; status: string; triggered_at: string; ticker?: string | null }> = [];
+
+  if (isJobStoreAvailable()) {
+    jobs = await listRecentJobsForRateLimit(ws.userId, action, cutoff);
+  } else {
+    try {
+      const files = await fs.readdir(ws.jobsDir);
+      await Promise.all(
+        files
+          .filter((file) => file.endsWith(".json"))
+          .map(async (file) => {
+            try {
+              jobs.push(
+                JSON.parse(await fs.readFile(path.join(ws.jobsDir, file), "utf-8")) as {
+                  action: string;
+                  status: string;
+                  triggered_at: string;
+                  ticker?: string | null;
+                }
+              );
+            } catch {}
+          })
+      );
+    } catch {}
+  }
 
   const recent = jobs.filter(
     (job) =>

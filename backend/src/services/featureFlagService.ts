@@ -44,6 +44,7 @@ const DEFAULT_FLAGS: readonly FlagDefault[] = [
   { kind: "boolean", name: "transactions_ledger_enabled", enabled: false },
   { kind: "boolean", name: "snooze_enabled", enabled: false },
   { kind: "boolean", name: "legacy_job_runners_enabled", enabled: true },
+  { kind: "boolean", name: "use_step_queue", enabled: false },
 
   // Admin-configurable scalar values (defaults from design §3 row 7).
   { kind: "value", name: "max_turns", value: 12 },
@@ -59,9 +60,9 @@ const DEFAULT_FLAGS: readonly FlagDefault[] = [
   // feature flag is enabled, so an empty list cannot silently allow access.
   { kind: "value", name: "forbidden_pattern_list", value: [
     // File paths
-    "~/clawd/", "users/", ".openclaw", "data/triggers/", "node_modules/",
+    "users/", "node_modules/",
     // Internal terms
-    "step queue", "openclaw", "watchdog", "userIsolation", "workspace", "clawd",
+    "step queue", "watchdog", "userIsolation", "workspace",
     // Model name prefixes (prevent leaking which model is in use)
     "claude-", "gpt-", "gemini-", "deepseek-", "o1-", "o3-",
   ] },

@@ -71,52 +71,44 @@ def build_strategy_agent(settings: Settings, packet: AnalysisResearchInput) -> A
     )
 
 
-class StrategyAnalysisRunner:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-
-    async def run(
-        self,
-        *,
-        action: str,
-        ticker: str,
-        position_context: dict[str, Any],
-        guidance: PositionGuidanceInput | dict[str, Any] | None,
-        current_strategy: dict[str, Any] | None,
-        recent_reports: list[dict[str, Any]],
-    ) -> TickerStrategyDraft:
-        if not self.settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required")
-        packet = build_research_input(action, ticker, position_context, guidance, current_strategy, recent_reports)
-        agent = build_strategy_agent(self.settings, packet)
-        return await asyncio.to_thread(self._invoke, agent, packet)
-
-    @staticmethod
-    def _invoke(agent: Any, packet: AnalysisResearchInput) -> TickerStrategyDraft:
-        action = packet["action"]
-        instruction = ACTION_INSTRUCTIONS.get(action, "Refresh the ticker strategy.")
-        prompt = (
-            f"{instruction}\n\n"
-            f"Ticker: {packet['ticker']}\n"
-            f"Context packet:\n{packet}\n\n"
-            "Use the subagents when useful, challenge weak assumptions, and return a structured strategy."
-        )
-        result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
-        structured = StrategyAnalysisRunner._extract_structured_response(result)
-        if not structured:
-            raise ValueError(f"No structured strategy returned for {packet['ticker']}")
+def _strategy_from_result(result: Any, *, ticker: str) -> TickerStrategyDraft:
+    if not isinstance(result, dict):
+        raise ValueError(f"No structured strategy returned for {ticker}")
+    structured = result.get("structured_response")
+    if isinstance(structured, TickerStrategyDraft):
+        return structured
+    if isinstance(structured, dict):
         return TickerStrategyDraft.model_validate(structured)
+    raise ValueError(f"No structured strategy returned for {ticker}")
 
-    @staticmethod
-    def _extract_structured_response(result: Any) -> dict[str, Any] | None:
-        if isinstance(result, dict):
-            for key in ("structured_response", "output", "final_output", "response"):
-                value = result.get(key)
-                if isinstance(value, dict):
-                    return value
-            messages = result.get("messages")
-            if isinstance(messages, list):
-                for message in reversed(messages):
-                    if isinstance(message, dict) and isinstance(message.get("content"), dict):
-                        return message["content"]
-        return result if isinstance(result, dict) else None
+
+def _invoke_analysis_agent_sync(agent: Any, packet: AnalysisResearchInput) -> TickerStrategyDraft:
+    action = packet["action"]
+    instruction = ACTION_INSTRUCTIONS.get(action, "Refresh the ticker strategy.")
+    prompt = (
+        f"{instruction}\n\n"
+        f"Ticker: {packet['ticker']}\n"
+        f"Context packet:\n{packet}\n\n"
+        "Use the subagents when useful, challenge weak assumptions, and return a structured strategy."
+    )
+    result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+    return _strategy_from_result(result, ticker=packet["ticker"])
+
+
+async def invoke_analysis_agent(
+    settings: Settings,
+    *,
+    action: str,
+    ticker: str,
+    position_context: dict[str, Any],
+    guidance: PositionGuidanceInput | dict[str, Any] | None,
+    current_strategy: dict[str, Any] | None,
+    recent_reports: list[dict[str, Any]],
+) -> TickerStrategyDraft:
+    if not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY is required")
+    packet = build_research_input(
+        action, ticker, position_context, guidance, current_strategy, recent_reports
+    )
+    agent = build_strategy_agent(settings, packet)
+    return await asyncio.to_thread(_invoke_analysis_agent_sync, agent, packet)

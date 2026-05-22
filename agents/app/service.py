@@ -12,14 +12,13 @@ from agents.app.schemas import (
     utc_now,
 )
 from agents.app.storage import WorkspaceStore
-from agents.bootstrap_agent.deep_agent import BootstrapStrategyRunner
+from agents.bootstrap_agent import invoke_bootstrap_agent
 
 
 class BootstrapService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.store = WorkspaceStore()
-        self.agent = BootstrapStrategyRunner(self.settings)
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start_bootstrap(self, payload: BootstrapStartRequest) -> BootstrapJobState:
@@ -56,7 +55,8 @@ class BootstrapService:
                 self._refresh_job_progress(job)
                 self.store.save_job_state(ws, job)
                 try:
-                    strategy = await self.agent.build_strategy(
+                    strategy = await invoke_bootstrap_agent(
+                        self.settings,
                         ticker=ticker,
                         position_context=position_lookup[ticker],
                         guidance=payload.guidance.get(ticker),

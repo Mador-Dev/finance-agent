@@ -143,6 +143,11 @@ const DEFAULT_USER_PLAN: UserPlan = "pro";
  * getUserProfileStatus().
  */
 export async function getUserProfile(userId: string): Promise<string> {
+  const { isApplicationDatabaseConfigured } = await import("../db/applicationDataSource.js");
+  if (isApplicationDatabaseConfigured()) {
+    const { getUserModelProfile } = await import("./userStore.js");
+    return getUserModelProfile(userId);
+  }
   try {
     const raw = await fs.readFile(userConfigPath(userId), "utf-8");
     const parsed = UserConfigSchema.safeParse(JSON.parse(raw));
@@ -154,6 +159,12 @@ export async function getUserProfile(userId: string): Promise<string> {
 }
 
 export async function getUserPlan(userId: string): Promise<UserPlan> {
+  const { isApplicationDatabaseConfigured } = await import("../db/applicationDataSource.js");
+  if (isApplicationDatabaseConfigured()) {
+    const { getUserPlan: readPlan } = await import("./userStore.js");
+    const plan = await readPlan(userId);
+    return plan === "free" || plan === "pro" || plan === "enterprise" ? plan : DEFAULT_USER_PLAN;
+  }
   try {
     const raw = await fs.readFile(userConfigPath(userId), "utf-8");
     const parsed = UserConfigSchema.safeParse(JSON.parse(raw));
@@ -212,7 +223,13 @@ export async function setUserProfile(
   const profile = await getProfile(profileName);
   if (!profile) throw new Error(`Profile not found: ${profileName}`);
 
-  // Write clean config
+  const { isApplicationDatabaseConfigured } = await import("../db/applicationDataSource.js");
+  if (isApplicationDatabaseConfigured()) {
+    const { setUserModelProfile } = await import("./userStore.js");
+    await setUserModelProfile(userId, profileName);
+    return;
+  }
+
   const previousPlan = await getUserPlan(userId);
   const config = { modelProfile: profileName, plan: previousPlan };
   await fs.writeFile(

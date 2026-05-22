@@ -2,9 +2,7 @@ import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db
 import { insertPortfolioRiskSnapshot } from "./portfolioRiskStore.js";
 import { getUsdIlsRate } from "./priceService.js";
 import { PortfolioFileSchema } from "../schemas/portfolio.js";
-import { promises as fs } from "fs";
-import { resolveConfiguredPath } from "./paths.js";
-import path from "path";
+import { readPortfolio } from "./portfolioStore.js";
 import { logger } from "./logger.js";
 
 /**
@@ -18,8 +16,6 @@ import { logger } from "./logger.js";
  *   - full-report admission
  *   - position_transactions insert path
  */
-
-const USERS_DIR = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
 
 export interface ConcentrationEntry {
   key: string;
@@ -44,9 +40,8 @@ export async function computeAndStorePortfolioRisk(userId: string): Promise<void
   if (!isApplicationDatabaseConfigured()) return;
 
   try {
-    const portfolioPath = path.join(USERS_DIR, userId, "data", "portfolio.json");
-    const raw = await fs.readFile(portfolioPath, "utf-8");
-    const portfolio = PortfolioFileSchema.safeParse(JSON.parse(raw));
+    const stored = await readPortfolio(userId);
+    const portfolio = PortfolioFileSchema.safeParse(stored);
     if (!portfolio.success) return;
 
     const usdIlsRate = await getUsdIlsRate();

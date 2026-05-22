@@ -1,8 +1,9 @@
 import { promises as fs } from "fs";
+import path from "path";
 import { logger } from "./logger.js";
 import { validateAgentOutput } from "../schemas/index.js";
 import type { AnalystType } from "../types/index.js";
-import { loadStrategyFile } from "./strategyFileService.js";
+import { loadUserStrategy } from "./strategyAccess.js";
 
 export interface ValidationResult {
   valid: boolean;
@@ -74,9 +75,14 @@ export async function validateReportFile(
 }
 
 export async function validateStrategyFile(
-  filePath: string
+  userId: string,
+  filePath: string,
+  tickerHint?: string
 ): Promise<ValidationResult> {
-  const result = await loadStrategyFile(filePath, { repair: true });
+  const result = await loadUserStrategy(userId, filePath, {
+    repair: true,
+    tickerHint: tickerHint ?? path.basename(path.dirname(filePath)),
+  });
   if (!result.valid || !result.strategy) {
     logger.warn(`validateStrategyFile: INVALID | path=${filePath} | errors=${result.errors?.length ?? 0}`);
     return {

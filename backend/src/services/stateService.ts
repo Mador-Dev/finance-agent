@@ -1,20 +1,9 @@
-import { promises as fs } from "fs";
-import path from "path";
-import { logger } from "./logger.js";
-import { PortfolioFileSchema, PortfolioStateSchema } from "../schemas/portfolio.js";
+import { PortfolioFileSchema } from "../schemas/portfolio.js";
 import type { PortfolioState, PortfolioStateData } from "../types/index.js";
-import { resolveConfiguredPath } from "./paths.js";
-import { loadStrategyFile } from "./strategyFileService.js";
-
-const USERS_DIR = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
-
-function stateFilePath(userId: string): string {
-  return path.join(USERS_DIR, userId, "data", "state.json");
-}
-
-function portfolioFilePath(userId: string): string {
-  return path.join(USERS_DIR, userId, "data", "portfolio.json");
-}
+import { readUserState, writeUserState } from "./userStore.js";
+import { readPortfolio } from "./portfolioStore.js";
+import { loadUserStrategy } from "./strategyAccess.js";
+import { getWorkspace } from "./workspaceService.js";
 
 export class StateTransitionError extends Error {
   constructor(
@@ -28,55 +17,14 @@ export class StateTransitionError extends Error {
 }
 
 export async function readState(userId: string): Promise<PortfolioStateData> {
-  const filePath = stateFilePath(userId);
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (parsed["state"] === "UNINITIALIZED") {
-      parsed["state"] = "INCOMPLETE";
-    }
-    const result = PortfolioStateSchema.safeParse(parsed);
-    if (!result.success) {
-      throw new Error(`Invalid state file: ${result.error.message}`);
-    }
-    return result.data as PortfolioStateData;
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {
-        userId,
-        state: "INCOMPLETE",
-        lastFullReportAt: null,
-        lastDailyAt: null,
-        pendingDeepDives: [],
-        bootstrapProgress: null,
-        onboarding: {
-          portfolioSubmittedAt: null,
-          positionGuidanceStatus: "not_started",
-          positionGuidance: {},
-        },
-      };
-    }
-    throw err;
-  }
+  return readUserState(userId);
 }
 
 export async function writeState(
   userId: string,
   update: Partial<PortfolioStateData>
 ): Promise<void> {
-  const filePath = stateFilePath(userId);
-  const current = await readState(userId);
-  const merged: PortfolioStateData = {
-    ...current,
-    ...update,
-    userId,
-  };
-  const result = PortfolioStateSchema.safeParse(merged);
-  if (!result.success) {
-    throw new Error(`Invalid state after merge: ${result.error.message}`);
-  }
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(result.data, null, 2), "utf-8");
+  await writeUserState(userId, update);
 }
 
 export interface ActiveUserEligibility {
@@ -93,39 +41,22 @@ export async function getActiveUserEligibility(userId: string): Promise<ActiveUs
     };
   }
 
-  let rawPortfolio: string;
-  try {
-    rawPortfolio = await fs.readFile(portfolioFilePath(userId), "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return { eligible: false, reason: "portfolio missing" };
-    }
-    throw err;
+  const portfolio = await readPortfolio(userId);
+  if (!portfolio) {
+    return { eligible: false, reason: "portfolio missing" };
   }
 
-  let parsedPortfolio: unknown;
-  try {
-    parsedPortfolio = JSON.parse(rawPortfolio);
-  } catch {
-    return { eligible: false, reason: "portfolio invalid" };
-  }
-
-  const portfolioResult = PortfolioFileSchema.safeParse(parsedPortfolio);
+  const portfolioResult = PortfolioFileSchema.safeParse(portfolio);
   if (!portfolioResult.success) {
     return { eligible: false, reason: "portfolio invalid" };
   }
 
-  const positionCount = Object.values(portfolioResult.data.accounts)
-    .flat()
-    .length;
+  const positionCount = Object.values(portfolioResult.data.accounts).flat().length;
   if (positionCount === 0) {
     return { eligible: false, reason: "portfolio empty" };
   }
 
-  return {
-    eligible: true,
-    reason: null,
-  };
+  return { eligible: true, reason: null };
 }
 
 export async function repairActiveUserState(userId: string): Promise<boolean> {
@@ -155,6 +86,7 @@ export async function repairActiveUserState(userId: string): Promise<boolean> {
     if (!eligibility.eligible) {
       repairReasons.push(`downgraded ACTIVE user to INCOMPLETE because ${eligibility.reason}`);
     }
+    const { logger } = await import("./logger.js");
     logger.info(`Repaired active-user state for ${userId}: ${repairReasons.join("; ")}`);
   }
 
@@ -174,7 +106,7 @@ export async function transitionState(
   reason: string
 ): Promise<void> {
   const current = await readState(userId);
-  const from = current.state as PortfolioState;
+  const from = current.state;
 
   const allowed = LEGAL_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
@@ -185,6 +117,7 @@ export async function transitionState(
     );
   }
 
+  const { logger } = await import("./logger.js");
   logger.info(`State transition: ${from} → ${to} | reason=${reason}`);
   await writeState(userId, { state: to });
 }
@@ -197,18 +130,15 @@ export interface ConditionCheckResult {
   summary: string;
 }
 
-export async function checkDailyConditions(
-  userId: string
-): Promise<ConditionCheckResult> {
-  const dataDir = path.join(USERS_DIR, userId, "data");
-
-  const tickersDir = path.join(dataDir, "tickers");
+export async function checkDailyConditions(userId: string): Promise<ConditionCheckResult> {
+  const ws = await getWorkspace(userId);
   const expiredCatalysts: ConditionCheckResult["expiredCatalysts"] = [];
   const pendingDeepDives: string[] = [];
 
   let tickerDirs: string[] = [];
   try {
-    tickerDirs = await fs.readdir(tickersDir);
+    const { promises: fs } = await import("fs");
+    tickerDirs = await fs.readdir(ws.tickersDir);
   } catch {
     // No tickers dir yet
   }
@@ -216,11 +146,9 @@ export async function checkDailyConditions(
   const now = new Date();
 
   for (const ticker of tickerDirs) {
-    const strategyPath = path.join(tickersDir, ticker, "strategy.json");
-    const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
-    if (!loaded.valid || !loaded.strategy) {
-      continue;
-    }
+    const strategyPath = ws.strategyFile(ticker);
+    const loaded = await loadUserStrategy(userId, strategyPath, { repair: true, tickerHint: ticker });
+    if (!loaded.valid || !loaded.strategy) continue;
     const strategy = loaded.strategy;
 
     const catalysts = strategy.catalysts ?? [];
@@ -235,14 +163,11 @@ export async function checkDailyConditions(
       }
     }
 
-    const verdict = strategy.verdict;
-    if (verdict === "HOLD") {
+    if (strategy.verdict === "HOLD") {
       const hasExpiring = catalysts.some(
         (c) => c.expiresAt !== null && new Date(c.expiresAt) > now
       );
-      if (!hasExpiring) {
-        pendingDeepDives.push(ticker);
-      }
+      if (!hasExpiring) pendingDeepDives.push(ticker);
     }
   }
 
@@ -259,3 +184,4 @@ export async function checkDailyConditions(
     summary,
   };
 }
+

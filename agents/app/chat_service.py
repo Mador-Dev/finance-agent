@@ -13,7 +13,7 @@ from agents.app.schemas import (
     SavedConversationListResponse,
     utc_now,
 )
-from agents.chat_agent import ChatAgentRunner
+from agents.chat_agent import invoke_chat_agent
 
 
 class ChatService:
@@ -21,7 +21,6 @@ class ChatService:
         self.settings = get_settings()
         self.runtime = RuntimeStore()
         self.jobs = jobs
-        self.runner = ChatAgentRunner(self.settings)
 
     def list_conversations(self, user_id: str, limit: int, offset: int) -> SavedConversationListResponse:
         items = self.runtime.list_conversations(user_id, limit, offset)
@@ -61,7 +60,8 @@ class ChatService:
             if turn.role in {"user", "assistant"}
         ]
 
-        reply_text, tool_call_count = await self.runner.reply(
+        reply_text = await invoke_chat_agent(
+            self.settings,
             messages=messages,
             load_portfolio=lambda: self.runtime.load_portfolio_accounts(user_id),
             load_strategies=lambda: self.runtime.list_strategies(user_id),
@@ -83,7 +83,7 @@ class ChatService:
             [assistant_turn],
             model=self.settings.deep_agent_model,
             cost_usd=0,
-            tool_call_count=tool_call_count,
+            tool_call_count=0,
         )
         updated.conversation.terminationReason = "model_final"
         self.runtime.save_conversation(user_id, updated)

@@ -20,7 +20,6 @@ import { VerdictActionEntitySchema } from "./entities/VerdictActionEntity.js";
 import { TickerSnoozeEntitySchema } from "./entities/TickerSnoozeEntity.js";
 import { PortfolioRiskSnapshotEntitySchema } from "./entities/PortfolioRiskSnapshotEntity.js";
 import { AdminAuditLogEntitySchema } from "./entities/AdminAuditLogEntity.js";
-import { MigrationArchiveEntitySchema } from "./entities/MigrationArchiveEntity.js";
 import { FeatureFlagEntitySchema } from "./entities/FeatureFlagEntity.js";
 import { ChannelBindingEntitySchema } from "./entities/ChannelBindingEntity.js";
 import { EncryptedSecretEntitySchema } from "./entities/EncryptedSecretEntity.js";
@@ -78,7 +77,6 @@ function buildDataSource(): DataSource {
       TickerSnoozeEntitySchema,
       PortfolioRiskSnapshotEntitySchema,
       AdminAuditLogEntitySchema,
-      MigrationArchiveEntitySchema,
       FeatureFlagEntitySchema,
       ChannelBindingEntitySchema,
       EncryptedSecretEntitySchema,
@@ -100,11 +98,17 @@ function buildDataSource(): DataSource {
   });
 }
 
+/**
+ * Applies the full DDL file once per backend process on first DB connect.
+ * The file is idempotent (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS); statements
+ * you append on deploy are executed on the next startup, while older statements no-op.
+ */
 async function applyDdl(ds: DataSource): Promise<void> {
   if (ddlApplied) return;
   const ddl = await fs.readFile(APP_DATABASE_DDL_PATH, "utf-8");
   await ds.query(ddl);
   ddlApplied = true;
+  logger.info(`Applied application DDL from ${APP_DATABASE_DDL_PATH}`);
 }
 
 export async function getApplicationDataSource(): Promise<DataSource> {

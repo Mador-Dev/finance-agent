@@ -1,6 +1,3 @@
-import { promises as fs } from "fs";
-import path from "path";
-import { resolveConfiguredPath } from "./paths.js";
 import { logger } from "./logger.js";
 import { readStrategy, writeStrategy, type StrategyRecord, type StrategyAssetClass, type StrategyAssetScope, type StrategyConfidence, type StrategyVerdict } from "./strategyStore.js";
 import type { Strategy } from "../schemas/strategy.js";
@@ -16,12 +13,6 @@ import type { Strategy } from "../schemas/strategy.js";
  * the file. Once Phase 2 cuts every reader over to the DB, the file ceases to
  * matter; we keep regenerating it through Phase 3 to make rollback safe.
  */
-
-const USERS_DIR = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
-
-function strategyFilePathForUser(userId: string, ticker: string): string {
-  return path.join(USERS_DIR, userId, "data", "tickers", ticker, "strategy.json");
-}
 
 /**
  * Render a `StrategyRecord` into the legacy JSON shape consumed by
@@ -68,20 +59,8 @@ export function renderStrategyJson(record: StrategyRecord): Record<string, unkno
 /**
  * Write the derived JSON file from a record. Atomic via temp file + rename.
  */
-export async function exportStrategyToFile(record: StrategyRecord): Promise<void> {
-  const targetPath = strategyFilePathForUser(record.userId, record.ticker);
-  const dir = path.dirname(targetPath);
-  await fs.mkdir(dir, { recursive: true });
-
-  const json = renderStrategyJson(record);
-  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-  try {
-    await fs.writeFile(tempPath, JSON.stringify(json, null, 2), "utf-8");
-    await fs.rename(tempPath, targetPath);
-  } catch (err) {
-    await fs.rm(tempPath, { force: true }).catch(() => undefined);
-    throw err;
-  }
+export async function exportStrategyToFile(_record: StrategyRecord): Promise<void> {
+  // Derived JSON files under users/ are retired; strategies live in Postgres only.
 }
 
 /**

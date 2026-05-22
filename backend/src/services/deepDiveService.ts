@@ -273,7 +273,7 @@ async function scanDeepDiveArtifacts(
     const stat = await fs.stat(strategyPath);
     strategyUpdatedAt = stat.mtime.toISOString();
     if (stat.mtimeMs >= cutoff) {
-      const validation = await validateStrategyFile(strategyPath);
+      const validation = await validateStrategyFile(ws.userId, strategyPath, ticker);
       strategyReady = validation.valid;
     }
   } catch {}
@@ -422,7 +422,7 @@ async function readCompletionEvidence(
     if (!strategy) {
       return { strategy: null, strategyUpdatedAt: stat.mtime.toISOString() };
     }
-    const validation = await validateStrategyFile(strategyPath);
+    const validation = await validateStrategyFile(ws.userId, strategyPath, ticker);
     if (!validation.valid) {
       return { strategy: null, strategyUpdatedAt: stat.mtime.toISOString() };
     }

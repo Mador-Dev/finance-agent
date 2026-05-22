@@ -26,6 +26,41 @@ class WorkspaceStore:
 
     def ensure_workspace(self, payload: BootstrapStartRequest) -> WorkspacePaths:
         ws = self.workspace(payload.userId)
+        portfolio_body = {
+            "meta": {
+                "currency": payload.currency,
+                "transactionFeeILS": payload.transactionFeeILS,
+                "note": payload.note,
+            },
+            "accounts": {
+                account: [position.model_dump() for position in positions]
+                for account, positions in payload.accounts.items()
+            },
+        }
+        if self.settings.database_url:
+            from agents.app.pg_store import (
+                upsert_bootstrap_lifecycle,
+                upsert_persona,
+                upsert_portfolio,
+            )
+
+            upsert_portfolio(payload.userId, portfolio_body)
+            upsert_bootstrap_lifecycle(
+                payload.userId,
+                payload.displayName or payload.userId,
+                payload.schedule.model_dump(),
+            )
+            upsert_persona(
+                payload.userId,
+                (
+                    f"# Investor Profile\n\n"
+                    f"Display name: {payload.displayName or payload.userId}\n\n"
+                    "## Bootstrap guidance\n"
+                    "Managed by the Python bootstrap agents service.\n"
+                ),
+            )
+            return ws
+
         for directory in [
             ws.root,
             ws.data_dir,
@@ -54,20 +89,7 @@ class WorkspaceStore:
                 "createdAt": utc_now(),
             },
         )
-        self._write_json(
-            ws.portfolio_file,
-            {
-                "meta": {
-                    "currency": payload.currency,
-                    "transactionFeeILS": payload.transactionFeeILS,
-                    "note": payload.note,
-                },
-                "accounts": {
-                    account: [position.model_dump() for position in positions]
-                    for account, positions in payload.accounts.items()
-                },
-            },
-        )
+        self._write_json(ws.portfolio_file, portfolio_body)
         self._write_json(
             ws.state_file,
             {
@@ -247,6 +269,28 @@ class WorkspaceStore:
         )
 
     def persist_ticker_strategy(self, ws: WorkspacePaths, strategy: TickerStrategyDraft) -> None:
+        if self.settings.database_url:
+            from agents.app.pg_store import upsert_report_artifact, upsert_strategy_row
+
+            upsert_strategy_row(ws.user_id, strategy.ticker, strategy.model_dump())
+            for name in ("fundamentals", "sentiment", "risk", "debate", "bull_case", "bear_case"):
+                payload = strategy.analyst_reports.get(name)
+                if payload:
+                    upsert_report_artifact(ws.user_id, strategy.ticker, name, payload)
+            upsert_report_artifact(
+                ws.user_id,
+                strategy.ticker,
+                "strategy",
+                {
+                    "ticker": strategy.ticker,
+                    "thesis": strategy.thesis,
+                    "verdict": strategy.verdict,
+                    "confidence": strategy.confidence,
+                    "reasoning": strategy.reasoning,
+                },
+            )
+            return
+
         ticker_dir = ws.tickers_dir / strategy.ticker
         report_dir = ws.reports_dir / strategy.ticker
         ticker_dir.mkdir(parents=True, exist_ok=True)

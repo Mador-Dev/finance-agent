@@ -7,10 +7,8 @@ import { syncAllUserProfiles, syncSystemAgentProfile } from "./services/profileS
 import { startDailyScheduler } from "./services/dailySchedulerService.js";
 import { repairActiveUserState } from "./services/stateService.js";
 import { reconcilePausedJobStates } from "./services/jobStateReconciler.js";
-import {
-  listWorkspaceUserIds,
-  reconcileWorkspaceIntegrity,
-} from "./services/workspaceService.js";
+import { reconcileWorkspaceIntegrity } from "./services/workspaceService.js";
+import { listUserIds } from "./services/userStore.js";
 import { buildWorkspace } from "./middleware/userIsolation.js";
 import {
   pruneExpiredObservabilityRows,
@@ -22,13 +20,13 @@ import { getApplicationDataSource, isApplicationDatabaseConfigured } from "./db/
 import { runStartupGuards } from "./services/security/startupGuards.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8081", 10);
-const USERS_DIR = process.env["USERS_DIR"] ?? "/root/clawd/users";
+const USERS_DIR = process.env["USERS_DIR"] ?? "../users";
 
 const app = createApp();
 
 async function reconcileStartupOperationalState(): Promise<void> {
   try {
-    const userIds = await listWorkspaceUserIds();
+    const userIds = await listUserIds();
     let workspaceRepairs = 0;
 
     for (const userId of userIds) {

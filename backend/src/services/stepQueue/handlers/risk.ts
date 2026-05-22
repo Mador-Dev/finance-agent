@@ -1,7 +1,7 @@
-import { promises as fs } from "fs";
 import type { z } from "zod";
 import { RiskReportSchema } from "../../../schemas/analysts.js";
 import { PortfolioFileSchema } from "../../../schemas/portfolio.js";
+import { readPortfolio } from "../../portfolioStore.js";
 import { gatherCommonInputs, makePromptHandler, persistReportArtifact } from "../handlerUtils.js";
 import type { ClaimedStepWorkItem } from "../types.js";
 
@@ -12,8 +12,12 @@ type RiskArtifact = z.infer<typeof RiskReportSchema>;
  * Pre-computed server-side and passed to the LLM so it can copy authoritative
  * numeric fields and focus on writing `riskFacts` prose.
  */
-async function computeRiskInputs(step: ClaimedStepWorkItem, portfolioPath: string): Promise<RiskArtifact> {
-  const portfolio = PortfolioFileSchema.parse(JSON.parse(await fs.readFile(portfolioPath, "utf-8")));
+async function computeRiskInputs(step: ClaimedStepWorkItem): Promise<RiskArtifact> {
+  const stored = await readPortfolio(step.userId);
+  if (!stored) {
+    throw new Error(`Portfolio not found for user ${step.userId}`);
+  }
+  const portfolio = PortfolioFileSchema.parse(stored);
   const usdIlsRate = 3.7;
   const allPositions = Object.entries(portfolio.accounts).flatMap(([account, positions]) =>
     positions.map((position) => ({ account, ...position }))
@@ -84,7 +88,7 @@ export const riskHandler = makePromptHandler({
   async gatherData(step, ws) {
     return {
       ...(await gatherCommonInputs(step, ws)),
-      computedRiskInputs: await computeRiskInputs(step, ws.portfolioFile),
+      computedRiskInputs: await computeRiskInputs(step),
     };
   },
   artifactPath: persistReportArtifact("risk"),

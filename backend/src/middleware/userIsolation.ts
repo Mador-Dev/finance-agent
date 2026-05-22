@@ -1,7 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
 import path from "path";
-import { promises as fs } from "fs";
 import { resolveConfiguredPath } from "../services/paths.js";
+import { readUserAuth } from "../services/userStore.js";
+import { isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
 
 export class WorkspaceViolationError extends Error {
   constructor(
@@ -84,16 +85,15 @@ export async function userIsolationMiddleware(
     return;
   }
 
-  const usersDir = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
-  const workspaceRoot = path.join(usersDir, userId);
-
-  try {
-    await fs.access(workspaceRoot);
-  } catch {
-    res.status(404).json({ error: "user workspace not found" });
-    return;
+  if (isApplicationDatabaseConfigured()) {
+    const auth = await readUserAuth(userId);
+    if (!auth?.passwordHash) {
+      res.status(404).json({ error: "user not found" });
+      return;
+    }
   }
 
+  const usersDir = resolveConfiguredPath(process.env["USERS_DIR"], "../users");
   const ws = buildWorkspace(userId, usersDir);
   res.locals["workspace"] = ws;
   next();

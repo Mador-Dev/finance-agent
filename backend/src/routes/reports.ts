@@ -1,11 +1,11 @@
 import { Router, type Response, type NextFunction } from "express";
-import { promises as fs } from "fs";
 import path from "path";
+import { readWorkspaceJson } from "../services/workspaceDataIO.js";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import { guardPath } from "../middleware/userIsolation.js";
 import { readFeedPage, type StoredBatch } from "../services/feedService.js";
-import { loadStrategyFile } from "../services/strategyFileService.js";
+import { loadUserStrategy } from "../services/strategyAccess.js";
 
 const router = Router();
 
@@ -44,22 +44,22 @@ async function readCurrentMeta(ws: UserWorkspace): Promise<{
   lastUpdated: string | null;
   newestBatchId: string | null;
 }> {
-  try {
-    const raw = await fs.readFile(path.join(ws.reportsDir, "index", "meta.json"), "utf-8");
-    return JSON.parse(raw) as {
+  const metaPath = path.join(ws.reportsDir, "index", "meta.json");
+  const parsed = await readWorkspaceJson(ws.userId, metaPath);
+  if (parsed && typeof parsed === "object") {
+    return parsed as {
       totalBatches: number;
       totalPages: number;
       lastUpdated: string | null;
       newestBatchId: string | null;
     };
-  } catch {
-    return {
+  }
+  return {
       totalBatches: 0,
       totalPages: 0,
       lastUpdated: null,
       newestBatchId: null,
     };
-  }
 }
 
 async function readCurrentPage(ws: UserWorkspace, pageNum: number): Promise<{
@@ -68,16 +68,15 @@ async function readCurrentPage(ws: UserWorkspace, pageNum: number): Promise<{
   batches: StoredBatch[];
 } | null> {
   const pagePath = path.join(ws.reportsDir, "index", `page-${String(pageNum).padStart(3, "0")}.json`);
-  try {
-    const raw = await fs.readFile(pagePath, "utf-8");
-    return JSON.parse(raw) as {
+  const parsed = await readWorkspaceJson(ws.userId, pagePath);
+  if (parsed && typeof parsed === "object") {
+    return parsed as {
       page: number;
       totalPages: number;
       batches: StoredBatch[];
     };
-  } catch {
-    return null;
   }
+  return null;
 }
 
 router.get(
@@ -171,21 +170,12 @@ router.get(
     const filePath = path.join(ws.reportsDir, ticker, `${reportType}.json`);
     guardPath(ws, filePath);
 
-    try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      try {
-        res.json({ batchId, ticker, reportType, content: JSON.parse(raw) });
-      } catch {
-        res.status(422).json({ error: "Report is not valid JSON" });
-      }
+    const content = await readWorkspaceJson(ws.userId, filePath);
+    if (!content) {
+      res.status(404).json({ error: "Report not found" });
       return;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        res.status(404).json({ error: "Report not found" });
-        return;
-      }
-      throw err;
     }
+    res.json({ batchId, ticker, reportType, content });
   })
 );
 
@@ -203,7 +193,7 @@ router.get(
     const filePath = ws.strategyFile(ticker);
     guardPath(ws, filePath);
 
-    const loaded = await loadStrategyFile(filePath, { repair: true, tickerHint: ticker });
+    const loaded = await loadUserStrategy(ws.userId, filePath, { repair: true, tickerHint: ticker });
     if (!loaded.valid || !loaded.strategy) {
       if ((loaded.errors ?? []).some((error) => error.startsWith("File not found:"))) {
         res.status(404).json({ error: "Strategy not found" });

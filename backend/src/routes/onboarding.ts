@@ -19,6 +19,8 @@ import {
 } from "../schemas/channels.js";
 import { PortfolioFileSchema } from "../schemas/portfolio.js";
 import { hashPassword, verifyPassword } from "../middleware/auth.js";
+import { writeUserAuth } from "../services/userStore.js";
+import { readPortfolio } from "../services/portfolioStore.js";
 import {
   createUserWorkspace,
   workspaceExists,
@@ -92,36 +94,18 @@ router.post(
     // Create workspace
     const ws = await createUserWorkspace(userId);
 
-    // Write auth.json
     const hash = await hashPassword(password);
-    await fs.writeFile(
-      path.join(ws.root, "auth.json"),
-      JSON.stringify({ passwordHash: hash }),
-      "utf-8"
-    );
-
-    // Write profile.json
-    const profile: Profile = {
-      userId,
+    await writeUserAuth(userId, { passwordHash: hash, tokenVersion: 0 });
+    const { ensureUserRecord } = await import("../services/userStore.js");
+    await ensureUserRecord(userId, {
       displayName,
-      telegramChatId: telegramChatId || "",
-      schedule,
-      createdAt: new Date().toISOString(),
-    };
-    await fs.writeFile(
-      path.join(ws.root, "profile.json"),
-      JSON.stringify(profile, null, 2),
-      "utf-8"
-    );
+      passwordHash: hash,
+      schedule: schedule as Record<string, unknown>,
+    });
 
-    // Update USER.md with the actual display name
-    try {
-      const userMdRaw = await fs.readFile(ws.userMdFile, "utf-8");
-      const updated = userMdRaw.replace(/\[DISPLAY_NAME\]/g, displayName);
-      await fs.writeFile(ws.userMdFile, updated, "utf-8");
-    } catch {
-      // USER.md will be created fresh if missing
-    }
+    const { readPersonaMd, writePersonaMd } = await import("../services/personaStore.js");
+    const userMdRaw = (await readPersonaMd(userId)) ?? "";
+    await writePersonaMd(userId, userMdRaw.replace(/\[DISPLAY_NAME\]/g, displayName));
 
     res.status(201).json({
       userId,
@@ -163,13 +147,8 @@ router.post(
     // Save schedule to profile.json if provided
     if (incomingSchedule) {
       try {
-        const profilePath = path.join(ws.root, "profile.json");
-        let profileData: Record<string, unknown> = {};
-        try {
-          profileData = JSON.parse(await fs.readFile(profilePath, "utf-8"));
-        } catch { /* profile may not exist yet */ }
-        profileData.schedule = incomingSchedule;
-        await fs.writeFile(profilePath, JSON.stringify(profileData, null, 2), "utf-8");
+        const { updateUserSchedule } = await import("../services/userStore.js");
+        await updateUserSchedule(ws.userId, incomingSchedule as Record<string, unknown>);
       } catch { /* non-fatal */ }
     }
 
@@ -191,14 +170,12 @@ router.get(
     const state = await readState(ws.userId);
 
     let tickers: string[] = [];
-    try {
-      const raw = await fs.readFile(ws.portfolioFile, "utf-8");
-      const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const storedPortfolio = await readPortfolio(ws.userId).catch(() => null);
+    if (storedPortfolio) {
+      const portfolio = PortfolioFileSchema.parse(storedPortfolio);
       tickers = Array.from(
         new Set(Object.values(portfolio.accounts).flat().map((position) => position.ticker))
       ).sort();
-    } catch {
-      tickers = [];
     }
 
     res.json({
@@ -223,15 +200,12 @@ router.post(
       return;
     }
 
-    let rawPortfolio: string;
-    try {
-      rawPortfolio = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const storedPortfolio = await readPortfolio(ws.userId);
+    if (!storedPortfolio) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(rawPortfolio));
+    const portfolio = PortfolioFileSchema.parse(storedPortfolio);
     const validTickers = new Set(
       Object.values(portfolio.accounts).flat().map((position) => position.ticker)
     );
@@ -305,26 +279,23 @@ router.get(
       return;
     }
 
-    // Read profile.json (optional — might not exist for demo users)
+    const { getUserOnboardingProfile } = await import("../services/userStore.js");
+    const dbProfile = await getUserOnboardingProfile(userId).catch(() => null);
     let profile: Profile | null = null;
-    try {
-      const raw = await fs.readFile(
-        path.join(ws.root, "profile.json"),
-        "utf-8"
-      );
-      profile = ProfileSchema.parse(JSON.parse(raw));
-    } catch {
-      // no profile yet
+    if (dbProfile) {
+      profile = ProfileSchema.parse({
+        userId,
+        displayName: dbProfile.displayName,
+        telegramChatId: "",
+        schedule: dbProfile.schedule,
+        createdAt: new Date().toISOString(),
+      });
     }
 
-    // Check portfolio.json exists and is valid
     let portfolioLoaded = false;
-    try {
-      const raw = await fs.readFile(ws.portfolioFile, "utf-8");
-      PortfolioFileSchema.parse(JSON.parse(raw));
-      portfolioLoaded = true;
-    } catch {
-      portfolioLoaded = false;
+    const storedPortfolio = await readPortfolio(userId).catch(() => null);
+    if (storedPortfolio) {
+      portfolioLoaded = PortfolioFileSchema.safeParse(storedPortfolio).success;
     }
 
     const bp = stateData.bootstrapProgress;
@@ -455,26 +426,21 @@ router.post(
       return;
     }
 
-    // Read current auth.json
-    const authPath = path.join(ws.root, "auth.json");
-    let authData: { passwordHash: string };
-    try {
-      authData = JSON.parse(await fs.readFile(authPath, "utf-8"));
-    } catch {
-      res.status(401).json({ error: "cannot read auth file" });
+    const { readUserAuth } = await import("../services/userStore.js");
+    const authData = await readUserAuth(ws.userId);
+    if (!authData) {
+      res.status(401).json({ error: "cannot read auth" });
       return;
     }
 
-    // Verify current password
     const valid = await verifyPassword(currentPassword, authData.passwordHash);
     if (!valid) {
       res.status(401).json({ error: "incorrect_password" });
       return;
     }
 
-    // Hash and save new password
     const hash = await hashPassword(newPassword);
-    await fs.writeFile(authPath, JSON.stringify({ passwordHash: hash }), "utf-8");
+    await writeUserAuth(ws.userId, { ...authData, passwordHash: hash });
 
     res.json({ changed: true });
   })
@@ -492,14 +458,8 @@ router.patch(
       return;
     }
 
-    const profilePath = path.join(ws.root, "profile.json");
-    let profileData: Record<string, unknown> = {};
-    try {
-      profileData = JSON.parse(await fs.readFile(profilePath, "utf-8"));
-    } catch { /* may not exist yet */ }
-
-    profileData.schedule = parsed.data;
-    await fs.writeFile(profilePath, JSON.stringify(profileData, null, 2), "utf-8");
+    const { updateUserSchedule } = await import("../services/userStore.js");
+    await updateUserSchedule(ws.userId, parsed.data as Record<string, unknown>);
 
     res.json({ updated: true, schedule: parsed.data });
   })
@@ -532,13 +492,8 @@ router.patch(
       return;
     }
     const trimmed = displayName.trim().slice(0, 64);
-    const profilePath = path.join(ws.root, "profile.json");
-    let profileData: Record<string, unknown> = {};
-    try {
-      profileData = JSON.parse(await fs.readFile(profilePath, "utf-8"));
-    } catch { /* may not exist */ }
-    profileData.displayName = trimmed;
-    await fs.writeFile(profilePath, JSON.stringify(profileData, null, 2), "utf-8");
+    const { updateUserDisplayName } = await import("../services/userStore.js");
+    await updateUserDisplayName(ws.userId, trimmed);
     res.json({ updated: true, displayName: trimmed });
   })
 );

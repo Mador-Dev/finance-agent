@@ -107,50 +107,47 @@ def build_bootstrap_deep_agent(settings: Settings, *, research_packet: Bootstrap
     )
 
 
-class BootstrapStrategyRunner:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-
-    async def build_strategy(
-        self,
-        *,
-        ticker: str,
-        position_context: dict[str, Any],
-        guidance: PositionGuidanceInput | None,
-    ) -> TickerStrategyDraft:
-        if not self.settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required")
-
-        research_packet = build_bootstrap_research_input(ticker, position_context, guidance)
-        agent = build_bootstrap_deep_agent(self.settings, research_packet=research_packet)
-        return await asyncio.to_thread(self._invoke, agent, ticker, research_packet)
-
-    @staticmethod
-    def _invoke(agent: Any, ticker: str, research_packet: BootstrapResearchInput) -> TickerStrategyDraft:
-        prompt = (
-            f"Build the initial portfolio strategy for ticker {ticker}.\n\n"
-            f"Research packet:\n{research_packet}\n\n"
-            "Run the relevant specialist subagents, challenge weak assumptions, "
-            "and synthesize a final ticker strategy."
-        )
-        result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
-        structured = BootstrapStrategyRunner._extract_structured_response(result)
-        if not structured:
-            raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
+def _strategy_from_result(result: Any, *, ticker: str) -> TickerStrategyDraft:
+    if not isinstance(result, dict):
+        raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
+    structured = result.get("structured_response")
+    if isinstance(structured, TickerStrategyDraft):
+        return structured
+    if isinstance(structured, dict):
         return TickerStrategyDraft.model_validate(structured)
+    raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
 
-    @staticmethod
-    def _extract_structured_response(result: Any) -> dict[str, Any] | None:
-        if isinstance(result, dict):
-            for key in ("structured_response", "output", "final_output", "response"):
-                candidate = result.get(key)
-                if isinstance(candidate, dict):
-                    return candidate
-            messages = result.get("messages")
-            if isinstance(messages, list):
-                for message in reversed(messages):
-                    if isinstance(message, dict):
-                        content = message.get("content")
-                        if isinstance(content, dict):
-                            return content
-        return result if isinstance(result, dict) else None
+
+def _invoke_bootstrap_agent_sync(
+    agent: Any,
+    *,
+    ticker: str,
+    research_packet: BootstrapResearchInput,
+) -> TickerStrategyDraft:
+    prompt = (
+        f"Build the initial portfolio strategy for ticker {ticker}.\n\n"
+        f"Research packet:\n{research_packet}\n\n"
+        "Run the relevant specialist subagents, challenge weak assumptions, "
+        "and synthesize a final ticker strategy."
+    )
+    result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+    return _strategy_from_result(result, ticker=ticker)
+
+
+async def invoke_bootstrap_agent(
+    settings: Settings,
+    *,
+    ticker: str,
+    position_context: dict[str, Any],
+    guidance: PositionGuidanceInput | None,
+) -> TickerStrategyDraft:
+    if not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY is required")
+    research_packet = build_bootstrap_research_input(ticker, position_context, guidance)
+    agent = build_bootstrap_deep_agent(settings, research_packet=research_packet)
+    return await asyncio.to_thread(
+        _invoke_bootstrap_agent_sync,
+        agent,
+        ticker=ticker,
+        research_packet=research_packet,
+    )

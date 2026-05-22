@@ -15,6 +15,8 @@ import { buildStrategyMetadata, type StrategyTrustLevel } from "./strategyBaseli
 import type { Strategy } from "../schemas/index.js";
 import { StrategySchema } from "../schemas/index.js";
 import { dualWriteStrategy } from "./strategyExportService.js";
+import { readReportArtifact } from "./reportArtifactStore.js";
+import { readWorkspaceJson, writeWorkspaceJson } from "./workspaceDataIO.js";
 
 const FULL_REPORT_STEPS = [
   {
@@ -91,7 +93,9 @@ function statePath(ws: UserWorkspace): string {
   return path.join(ws.reportsDir, "full_report_state.json");
 }
 
-async function readJsonIfExists<T>(filePath: string): Promise<T | null> {
+async function readJsonIfExists<T>(userId: string, filePath: string): Promise<T | null> {
+  const fromDb = await readWorkspaceJson(userId, filePath);
+  if (fromDb !== null) return fromDb as T;
   try {
     const raw = await fs.readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
@@ -112,28 +116,16 @@ async function scanTicker(
   strategyInvalidTerminal: boolean;
   failureReason: string | null;
 }> {
-  const cutoff = new Date(triggeredAt).getTime();
   let completedSteps = 0;
   let currentStep: string | null = null;
 
   for (const step of FULL_REPORT_STEPS) {
-    const filePath = path.join(ws.reportsDir, ticker, step.filename);
-    try {
-      const stat = await fs.stat(filePath);
-      if (stat.mtimeMs < cutoff) {
-        currentStep = step.label;
-        break;
-      }
-      const validation = await validateReportFile(filePath, step.analyst);
-      if (!validation.valid) {
-        currentStep = step.label;
-        break;
-      }
-      completedSteps += 1;
-    } catch {
+    const artifact = await readReportArtifact(ws.userId, ticker, step.key).catch(() => null);
+    if (!artifact) {
       currentStep = step.label;
       break;
     }
+    completedSteps += 1;
   }
 
   let strategyReady = false;
@@ -142,7 +134,7 @@ async function scanTicker(
   try {
     const stat = await fs.stat(ws.strategyFile(ticker));
     if (stat.mtimeMs >= cutoff) {
-      const validation = await validateStrategyFile(ws.strategyFile(ticker));
+      const validation = await validateStrategyFile(ws.userId, ws.strategyFile(ticker), ticker);
       strategyReady = validation.valid;
       if (!validation.valid && completedSteps === FULL_REPORT_STEPS.length) {
         strategyInvalidTerminal = true;
@@ -180,7 +172,7 @@ async function promoteFullReportStrategy(
   ws: UserWorkspace,
   ticker: string
 ): Promise<{ promoted: boolean; strategy: Strategy | null; error: string | null }> {
-  const validation = await validateStrategyFile(ws.strategyFile(ticker));
+  const validation = await validateStrategyFile(ws.userId, ws.strategyFile(ticker), ticker);
   if (!validation.valid || !validation.data) {
     return {
       promoted: false,
@@ -300,8 +292,7 @@ async function buildState(
 }
 
 async function writeFullReportState(ws: UserWorkspace, state: FullReportState): Promise<void> {
-  await fs.mkdir(ws.reportsDir, { recursive: true });
-  await fs.writeFile(statePath(ws), JSON.stringify(state, null, 2), "utf-8");
+  await writeWorkspaceJson(ws.userId, statePath(ws), state);
 }
 
 async function writeLegacyProgressFile(
@@ -316,28 +307,20 @@ async function writeLegacyProgressFile(
     return;
   }
 
-  await fs.writeFile(
-    progressPath,
-    JSON.stringify(
-      {
-        startedAt: state.startedAt,
-        totalTickers: state.totalTickers,
-        completed: state.completedTickers,
-        failed: state.failedTickers,
-        remaining: state.remainingTickers,
-      },
-      null,
-      2
-    ),
-    "utf-8"
-  );
+  await writeWorkspaceJson(ws.userId, progressPath, {
+    startedAt: state.startedAt,
+    totalTickers: state.totalTickers,
+    completed: state.completedTickers,
+    failed: state.failedTickers,
+    remaining: state.remainingTickers,
+  });
 }
 
 async function readStrategySnapshot(
   ws: UserWorkspace,
   ticker: string
 ): Promise<StrategySnapshot | null> {
-  const raw = await readJsonIfExists<Record<string, unknown>>(ws.strategyFile(ticker));
+  const raw = await readJsonIfExists<Record<string, unknown>>(ws.userId, ws.strategyFile(ticker));
   if (!raw) return null;
   if (
     typeof raw["verdict"] !== "string" ||
@@ -503,7 +486,7 @@ export async function reconcileFullReportJob(
   if (job.action !== "full_report") return job;
 
   if (job.status === "completed") {
-    const existingState = await readJsonIfExists<FullReportState>(statePath(ws));
+    const existingState = await readJsonIfExists<FullReportState>(ws.userId, statePath(ws));
     if (existingState?.jobId === job.id && existingState.status === "completed") {
       return job;
     }
@@ -555,7 +538,7 @@ export async function reconcileFailedFullReportJob(
     return;
   }
 
-  const existingState = await readJsonIfExists<FullReportState>(statePath(ws));
+  const existingState = await readJsonIfExists<FullReportState>(ws.userId, statePath(ws));
   if (existingState && existingState.jobId === job.id && existingState.status !== "completed") {
     const completedAt = job.completed_at ?? existingState.completedAt ?? new Date().toISOString();
     await writeFullReportState(ws, {
@@ -594,7 +577,7 @@ export async function getFullReportJobProgress(
   totalSteps: number;
 } | null> {
   if (job.action !== "full_report") return null;
-  const state = await readJsonIfExists<FullReportState>(statePath(ws));
+  const state = await readJsonIfExists<FullReportState>(ws.userId, statePath(ws));
   if (!state || state.jobId !== job.id) return null;
 
   const pct =

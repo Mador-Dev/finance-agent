@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { UserWorkspace } from "../../../middleware/userIsolation.js";
 import { getPrice, getUsdIlsRate } from "../../priceService.js";
 import { PortfolioFileSchema } from "../../../schemas/portfolio.js";
-import { loadStrategyFile } from "../../strategyFileService.js";
+import { loadUserStrategy } from "../../strategyAccess.js";
 import { findActiveSnooze } from "../../snoozeStore.js";
 import { recordEscalation } from "../../escalationHistoryStore.js";
 import { logger } from "../../logger.js";
@@ -74,7 +74,7 @@ async function computeSignals(
   const now = Date.now();
 
   // 1. Strategy health
-  const loaded = await loadStrategyFile(ws.strategyFile(ticker), {
+  const loaded = await loadUserStrategy(ws.userId, ws.strategyFile(ticker), {
     repair: false,
     tickerHint: ticker,
   });
@@ -116,7 +116,10 @@ async function computeSignals(
 
   // 5. Price drawdown from cost basis
   try {
-    const raw = await fs.readFile(ws.portfolioFile, "utf-8");
+    const { readPortfolio } = await import("../../portfolioStore.js");
+    const stored = await readPortfolio(ws.userId);
+    if (!stored) throw new Error("portfolio not found");
+    const raw = JSON.stringify(stored);
     const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
     const allPositions = Object.values(portfolio.accounts).flat();
     const position = allPositions.find((p) => p.ticker === ticker);
@@ -261,7 +264,7 @@ export const quickCheckHandler: StepHandler<QuickCheckResult> = {
 
   async persistArtifact(artifact, ws, step) {
     const filePath = path.join(ws.reportsDir, step.ticker, "quick_check.json");
-    await atomicWriteJson(filePath, artifact);
+    await atomicWriteJson(step.userId, filePath, artifact);
     return filePath;
   },
 };
@@ -310,6 +313,6 @@ export async function executeQuickCheckStep(
   };
 
   const filePath = path.join(ws.reportsDir, step.ticker, "quick_check.json");
-  await atomicWriteJson(filePath, result);
+  await atomicWriteJson(step.userId, filePath, result);
   return result;
 }

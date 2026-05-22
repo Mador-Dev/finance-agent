@@ -17,7 +17,7 @@ export const synthesisHandler = makePromptHandler({
     return {
       ...(await gatherCommonInputs(step, ws)),
       analystArtifacts: await gatherAnalystArtifacts(ws, step.ticker),
-      debate: await readJsonIfExists(ws.reportFile(step.ticker, "debate")),
+      debate: await readJsonIfExists(ws.userId, ws.reportFile(step.ticker, "debate")),
     };
   },
   enrichArtifact(raw: Strategy, inputs?: StepInputs): Strategy {
@@ -42,7 +42,7 @@ export const synthesisHandler = makePromptHandler({
   },
   async artifactPath(artifact, ws, step) {
     const filePath = ws.strategyFile(step.ticker);
-    await atomicWriteJson(filePath, artifact);
+    await atomicWriteJson(step.userId, filePath, artifact);
     await dualWriteStrategy(artifact as Strategy, step.userId);
     return filePath;
   },

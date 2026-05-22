@@ -4,7 +4,19 @@ import type { AuthenticatedRequest } from "../middleware/auth.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import type { Exchange } from "../types/index.js";
 import { PortfolioFileSchema, PortfolioPositionSchema } from "../schemas/portfolio.js";
+import { readPortfolio, writePortfolio } from "../services/portfolioStore.js";
 import { getUsdIlsRate, getPricesParallel, getPriceHistory } from "../services/priceService.js";
+import type { z } from "zod";
+
+type PortfolioFile = z.infer<typeof PortfolioFileSchema>;
+
+async function loadPortfolio(userId: string): Promise<PortfolioFile | null> {
+  return readPortfolio(userId);
+}
+
+async function savePortfolio(userId: string, portfolio: PortfolioFile): Promise<void> {
+  await writePortfolio(userId, portfolio);
+}
 
 const router = Router();
 
@@ -59,29 +71,23 @@ router.get(
   "/portfolio",
   handler(async (_req: AuthenticatedRequest, res: Response) => {
     const ws = res.locals["workspace"] as UserWorkspace;
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        // No portfolio yet — return empty state
-        res.json({
-          updatedAt: new Date().toISOString(),
-          usdIlsRate: 0,
-          totalILS: 0,
-          totalCostILS: 0,
-          totalPlILS: 0,
-          totalPlPct: 0,
-          totalDayChangeILS: 0,
-          totalDayChangePct: 0,
-          accounts: [],
-          positions: [],
-        });
-        return;
-      }
-      throw err;
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
+      res.json({
+        updatedAt: new Date().toISOString(),
+        usdIlsRate: 0,
+        totalILS: 0,
+        totalCostILS: 0,
+        totalPlILS: 0,
+        totalPlPct: 0,
+        totalDayChangeILS: 0,
+        totalDayChangePct: 0,
+        accounts: [],
+        positions: [],
+      });
+      return;
     }
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
 
     const usdIlsRate = await getUsdIlsRate();
 
@@ -244,15 +250,12 @@ const updatePositionHandler = handler(async (req: AuthenticatedRequest, res: Res
       return;
     }
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
 
     const normalizedTicker = tickerParam.toUpperCase();
     const matches: Array<{ accountName: string; index: number }> = [];
@@ -302,7 +305,7 @@ const updatePositionHandler = handler(async (req: AuthenticatedRequest, res: Res
       }
     }
 
-    await fs.writeFile(ws.portfolioFile, JSON.stringify(portfolio, null, 2), "utf-8");
+    await savePortfolio(ws.userId, portfolio);
     res.json({ success: true });
   });
 
@@ -327,15 +330,12 @@ router.post(
         force?: boolean;
       };
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
 
     if (!account || !portfolio.accounts[account]) {
       res.status(400).json({ error: "account_not_found" });
@@ -365,7 +365,7 @@ router.post(
     });
 
     portfolio.accounts[account].push(newPos);
-    await fs.writeFile(ws.portfolioFile, JSON.stringify(portfolio, null, 2), "utf-8");
+    await savePortfolio(ws.userId, portfolio);
     res.status(201).json({ success: true });
   })
 );
@@ -387,15 +387,12 @@ router.delete(
       return;
     }
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
     const positions = portfolio.accounts[account];
     if (!positions) {
       res.status(404).json({ error: "account_not_found" });
@@ -409,7 +406,7 @@ router.delete(
     }
 
     portfolio.accounts[account] = nextPositions;
-    await fs.writeFile(ws.portfolioFile, JSON.stringify(portfolio, null, 2), "utf-8");
+    await savePortfolio(ws.userId, portfolio);
     res.json({ success: true });
   })
 );
@@ -426,22 +423,19 @@ router.post(
       return;
     }
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
     if (portfolio.accounts[name]) {
       res.status(409).json({ error: "account_exists" });
       return;
     }
 
     portfolio.accounts[name] = [];
-    await fs.writeFile(ws.portfolioFile, JSON.stringify(portfolio, null, 2), "utf-8");
+    await savePortfolio(ws.userId, portfolio);
     res.status(201).json({ success: true, account: name });
   })
 );
@@ -458,15 +452,12 @@ router.delete(
       return;
     }
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(ws.portfolioFile, "utf-8");
-    } catch {
+    const stored = await loadPortfolio(ws.userId);
+    if (!stored) {
       res.status(404).json({ error: "portfolio not found" });
       return;
     }
-
-    const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
+    const portfolio = PortfolioFileSchema.parse(stored);
     const account = portfolio.accounts[name];
     if (!account) {
       res.status(404).json({ error: "account_not_found" });
@@ -478,7 +469,7 @@ router.delete(
     }
 
     delete portfolio.accounts[name];
-    await fs.writeFile(ws.portfolioFile, JSON.stringify(portfolio, null, 2), "utf-8");
+    await savePortfolio(ws.userId, portfolio);
     res.json({ success: true });
   })
 );

@@ -171,7 +171,10 @@ function buildExposureSummary(tickers: string[]): ExposureSummary {
 }
 
 async function readPortfolioTickers(ws: UserWorkspace): Promise<string[]> {
-  const raw = await fs.readFile(ws.portfolioFile, "utf-8");
+  const { readPortfolio } = await import("./portfolioStore.js");
+  const stored = await readPortfolio(ws.userId);
+  if (!stored) throw new Error("portfolio not found");
+  const raw = JSON.stringify(stored);
   const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
   return Array.from(
     new Set(

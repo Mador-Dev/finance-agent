@@ -1,9 +1,15 @@
 import { randomBytes } from "crypto";
-import { promises as fs } from "fs";
 import { logger } from "./logger.js";
 import { JobSchema } from "../schemas/job.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import type { Job, JobAction, JobSource } from "../types/index.js";
+import {
+  createJobInDb,
+  getJobFromDb,
+  isJobStoreAvailable,
+  listJobsFromDb,
+  updateJobInDb,
+} from "./jobStore.js";
 
 export class JobNotFoundError extends Error {
   constructor(jobId: string) {
@@ -29,6 +35,10 @@ export async function createJob(
   ticker?: string,
   options?: { source?: JobSource }
 ): Promise<Job> {
+  if (!isJobStoreAvailable()) {
+    throw new Error("APP_DATABASE_URL is required for job state");
+  }
+
   const id = generateJobId();
   const triggered_at = new Date().toISOString();
 
@@ -46,100 +56,25 @@ export async function createJob(
     error: null,
   };
 
-  const jobFile = workspace.jobFile(id);
-  await fs.mkdir(workspace.jobsDir, { recursive: true });
-  await fs.writeFile(jobFile, JSON.stringify(job, null, 2), "utf-8");
-
+  await createJobInDb(workspace.userId, job);
   logger.info(`Job created: ${id} action=${action} ticker=${ticker ?? "none"}`);
   return job;
 }
 
-export async function getJob(
-  workspace: UserWorkspace,
-  jobId: string
-): Promise<Job> {
-  const filePath = workspace.jobFile(jobId);
-  let raw: string;
-  try {
-    raw = await fs.readFile(filePath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new JobNotFoundError(jobId);
-    }
-    throw err;
+export async function getJob(workspace: UserWorkspace, jobId: string): Promise<Job> {
+  if (!isJobStoreAvailable()) {
+    throw new Error("APP_DATABASE_URL is required for job state");
   }
-
-  const parsed = JSON.parse(raw);
-  const result = JobSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new Error(`Invalid job file: ${jobId}`);
-  }
-  const data = result.data as Record<string, unknown>;
-  const job: Job = {
-    id: data["id"] as string,
-    action: data["action"] as Job["action"],
-    ticker: data["ticker"] as Job["ticker"],
-    source: (data["source"] as Job["source"] | undefined) ?? null,
-    budget_admitted_at: (data["budget_admitted_at"] as string | null | undefined) ?? null,
-    status: data["status"] as Job["status"],
-    triggered_at: data["triggered_at"] as string,
-    started_at: data["started_at"] as Job["started_at"],
-    completed_at: data["completed_at"] as Job["completed_at"],
-    result: data["result"] as Job["result"],
-    error: data["error"] as Job["error"],
-  };
+  const job = await getJobFromDb(workspace.userId, jobId);
+  if (!job) throw new JobNotFoundError(jobId);
   return job;
 }
 
-export async function listJobs(
-  workspace: UserWorkspace,
-  limit = 50
-): Promise<Job[]> {
-  let files: string[];
-  try {
-    files = await fs.readdir(workspace.jobsDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw err;
+export async function listJobs(workspace: UserWorkspace, limit = 50): Promise<Job[]> {
+  if (!isJobStoreAvailable()) {
+    throw new Error("APP_DATABASE_URL is required for job state");
   }
-
-  const jobs: Job[] = [];
-  for (const file of files) {
-    if (!file.endsWith(".json")) continue;
-    const filePath = `${workspace.jobsDir}/${file}`;
-    try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      const parsed = JSON.parse(raw);
-      const result = JobSchema.safeParse(parsed);
-      if (result.success) {
-        const d = result.data as Record<string, unknown>;
-        jobs.push({
-          id: d["id"] as string,
-          action: d["action"] as Job["action"],
-          ticker: d["ticker"] as Job["ticker"],
-          source: (d["source"] as Job["source"] | undefined) ?? null,
-          budget_admitted_at: (d["budget_admitted_at"] as string | null | undefined) ?? null,
-          status: d["status"] as Job["status"],
-          triggered_at: d["triggered_at"] as string,
-          started_at: d["started_at"] as Job["started_at"],
-          completed_at: d["completed_at"] as Job["completed_at"],
-          result: d["result"] as Job["result"],
-          error: d["error"] as Job["error"],
-        });
-      }
-    } catch {
-      logger.warn(`Skipping invalid job file: ${file}`);
-    }
-  }
-
-  jobs.sort(
-    (a, b) =>
-      new Date(b.triggered_at).getTime() - new Date(a.triggered_at).getTime()
-  );
-
-  return jobs.slice(0, limit);
+  return listJobsFromDb(workspace.userId, limit);
 }
 
 export async function hasPendingAgentManagedWork(
@@ -153,13 +88,12 @@ export async function updateJob(
   jobId: string,
   update: Partial<Pick<Job, "status" | "started_at" | "completed_at" | "result" | "error" | "budget_admitted_at">>
 ): Promise<Job> {
+  if (!isJobStoreAvailable()) {
+    throw new Error("APP_DATABASE_URL is required for job state");
+  }
+
   const current = await getJob(workspace, jobId);
-
-  const merged: Job = {
-    ...current,
-    ...update,
-  };
-
+  const merged: Job = { ...current, ...update };
   const result = JobSchema.safeParse(merged);
   if (!result.success) {
     throw new Error(
@@ -167,12 +101,8 @@ export async function updateJob(
     );
   }
 
-  await fs.writeFile(
-    workspace.jobFile(jobId),
-    JSON.stringify(merged, null, 2),
-    "utf-8"
-  );
-
-  logger.info(`Job updated: ${jobId} status=${merged.status}`);
-  return merged;
+  const updated = await updateJobInDb(workspace.userId, jobId, update);
+  if (!updated) throw new JobNotFoundError(jobId);
+  logger.info(`Job updated: ${jobId} status=${updated.status}`);
+  return updated;
 }

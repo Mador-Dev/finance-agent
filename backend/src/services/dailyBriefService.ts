@@ -10,7 +10,7 @@ import { updateJob } from "./jobService.js";
 import { readState, writeState } from "./stateService.js";
 import { publishNotification } from "./notificationService.js";
 import { listTrackedAssets } from "./trackedAssetService.js";
-import { loadStrategyFile } from "./strategyFileService.js";
+import { loadUserStrategy } from "./strategyAccess.js";
 import { ensurePointsBudgetAvailable } from "./pointsBudgetService.js";
 import { requiresBudgetAdmission } from "./jobAdmissionService.js";
 import { admitOrReuseStepQueueJob } from "./stepQueue/admission.js";
@@ -366,7 +366,7 @@ export async function evaluateTrackingDailyEntries(
   const evaluated: Array<TrackingDailyEntry & { sortScore: number }> = [];
 
   for (const asset of trackedAssets) {
-    const loaded = await loadStrategyFile(ws.strategyFile(asset.ticker), {
+    const loaded = await loadUserStrategy(ws.userId, ws.strategyFile(asset.ticker), {
       repair: true,
       tickerHint: asset.ticker,
     });
@@ -424,7 +424,10 @@ async function topPortfolioTickers(
   ws: UserWorkspace,
   limit: number
 ): Promise<Array<{ ticker: string; currentILS: number; dayChangePct: number }>> {
-  const raw = await fs.readFile(ws.portfolioFile, "utf-8");
+  const { readPortfolio } = await import("./portfolioStore.js");
+  const stored = await readPortfolio(ws.userId);
+  if (!stored) throw new Error("portfolio not found");
+  const raw = JSON.stringify(stored);
   const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
   const usdIlsRate = await getUsdIlsRate();
   const flat = Object.values(portfolio.accounts).flat();

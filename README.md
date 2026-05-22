@@ -1,21 +1,37 @@
 # Portfolio Assistant
 
-A private-investor portfolio operations product that keeps holdings continuously monitored, escalates changed positions, and delivers concise updates through Telegram or web.
+Private portfolio monitoring: holdings, strategies, reports, jobs, and alerts via web and Telegram/WhatsApp.
 
-## Start here
+## Stack
 
-- Product overview: [`docs/product/overview.md`](docs/product/overview.md)
-- GSD planning docs: [`docs/gsd-docs/`](docs/gsd-docs/)
-- Pilot feature catalog: [`docs/pilot-features/`](docs/pilot-features/)
-- Historical production reports: [`docs/archive/production-reports/`](docs/archive/production-reports/)
-- Historical bug notes: [`docs/archive/open-bugs/`](docs/archive/open-bugs/)
+| Layer | Path | Role |
+|-------|------|------|
+| Web | `frontend/` | Dashboard, onboarding, admin |
+| API | `backend/` | Auth, jobs, reports, notifications (Express + Postgres) |
+| Agents | `agents/` | LangChain / DeepAgents multi-agent service (FastAPI, port 8090) |
 
-## Active surfaces
+**All durable product state lives in Postgres** (`APP_DATABASE_URL`, schema in `db/application_postgres.sql`). There is no `users/` workspace for runtime data.
 
-- `backend/` — API, scheduling, jobs, notifications, observability, database integration.
-- `frontend/` — dashboard and user-facing web app.
-- `shared/user-workspace/` — runtime template files copied into per-user workspaces.
-- `data/` — runtime configuration used by the backend and deploy process.
-- `scripts/` — repository verification scripts.
+## Agents (`agents/`)
 
-Development-agent instructions intentionally remain in root `AGENTS.md` because local model harnesses load it by convention.
+State-of-the-art **LangChain-first** multi-agent design:
+
+- **Bootstrap & analysis** — `deepagents.create_deep_agent` with specialist subagents (fundamentals, sentiment, risk, critic, bull/bear) in `bootstrap_agent/` and `analysis_agent/`.
+- **Web chat** — `langchain.agents.create_agent` tool-calling loop in `chat_agent/`.
+- **Graph tooling** — `langgraph.json` registers the bootstrap graph for LangGraph CLI/dev.
+
+When `DATABASE_URL` is set, the agents service reads/writes the same Postgres tables as the backend (portfolio, strategies, report artifacts).
+
+## Docs
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Product overview](docs/product/overview.md)
+
+## Local run
+
+1. Postgres + `APP_DATABASE_URL` in `backend/.env`
+2. `cd backend && npm install && npm run dev`
+3. `cd frontend && npm install && npm run dev`
+4. `cd agents && pip install -r requirements.txt && uvicorn agents.main:app --port 8090`
+
+Agent instructions for coding assistants: root `AGENTS.md`.

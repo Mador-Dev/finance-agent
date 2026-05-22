@@ -4,7 +4,8 @@ import type { AuthenticatedRequest } from "../middleware/auth.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import type { Verdict, Confidence } from "../types/index.js";
 import { PortfolioFileSchema } from "../schemas/portfolio.js";
-import { loadStrategyFile } from "../services/strategyFileService.js";
+import { readPortfolio } from "../services/portfolioStore.js";
+import { loadUserStrategy } from "../services/strategyAccess.js";
 import { logger } from "../services/logger.js";
 import { listTrackedAssets, type TrackedAssetStatus } from "../services/trackedAssetService.js";
 import { listStrategies, readStrategy, type StrategyRecord } from "../services/strategyStore.js";
@@ -134,18 +135,14 @@ router.get(
     const ws = res.locals["workspace"] as UserWorkspace;
 
     const portfolioTickers = new Set<string>();
-    try {
-      const rawPortfolio = await fs.readFile(ws.portfolioFile, "utf-8");
-      const parsedPortfolio = PortfolioFileSchema.safeParse(JSON.parse(rawPortfolio));
-      if (parsedPortfolio.success) {
-        for (const positions of Object.values(parsedPortfolio.data.accounts)) {
-          for (const position of positions) {
-            portfolioTickers.add(position.ticker);
-          }
+    const storedPortfolio = await readPortfolio(ws.userId).catch(() => null);
+    const parsedPortfolio = PortfolioFileSchema.safeParse(storedPortfolio);
+    if (parsedPortfolio.success) {
+      for (const positions of Object.values(parsedPortfolio.data.accounts)) {
+        for (const position of positions) {
+          portfolioTickers.add(position.ticker);
         }
       }
-    } catch {
-      // keep empty portfolio set
     }
 
     const trackedStatusByTicker = await loadTrackedAssetStatusByTicker(ws.userId);
@@ -188,7 +185,7 @@ router.get(
 
     for (const ticker of tickerDirs) {
       const strategyPath = ws.strategyFile(ticker);
-      const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+      const loaded = await loadUserStrategy(ws.userId, strategyPath, { repair: true, tickerHint: ticker });
       if (!loaded.valid || !loaded.strategy) continue;
 
       const s = loaded.strategy;
@@ -270,7 +267,7 @@ router.get(
     }
 
     // JSON fallback
-    const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+    const loaded = await loadUserStrategy(ws.userId, strategyPath, { repair: true, tickerHint: ticker });
     if (!loaded.valid || !loaded.strategy) {
       if ((loaded.errors ?? []).some((error) => error.startsWith("File not found:"))) {
         res.status(404).json({ error: "Strategy not found" });

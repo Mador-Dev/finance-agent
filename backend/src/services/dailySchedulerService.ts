@@ -56,28 +56,23 @@ function localDayFromIso(iso: string, timezone: string): string | null {
 }
 
 async function listScheduledUsers(): Promise<ScheduledUser[]> {
-  const entries = await fs.readdir(USERS_DIR, { withFileTypes: true });
-  const users: ScheduledUser[] = [];
+  if (!isApplicationDatabaseConfigured()) return [];
+  const ds = await getApplicationDataSource();
+  const rows = (await ds.query(
+    `SELECT user_id, schedule FROM users WHERE state = 'ACTIVE'`
+  )) as Array<{ user_id: string; schedule: { dailyBriefTime?: string; timezone?: string } }>;
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    try {
-      const raw = await fs.readFile(path.join(USERS_DIR, entry.name, "profile.json"), "utf-8");
-      const profile = JSON.parse(raw) as {
-        schedule?: { dailyBriefTime?: string; timezone?: string };
-      };
-      if (profile.schedule?.dailyBriefTime && profile.schedule?.timezone) {
-        users.push({
-          userId: entry.name,
-          dailyBriefTime: profile.schedule.dailyBriefTime,
-          timezone: profile.schedule.timezone,
-        });
-      }
-    } catch {
-      // ignore invalid/missing profiles
+  const users: ScheduledUser[] = [];
+  for (const row of rows) {
+    const schedule = row.schedule ?? {};
+    if (schedule.dailyBriefTime && schedule.timezone) {
+      users.push({
+        userId: row.user_id,
+        dailyBriefTime: schedule.dailyBriefTime,
+        timezone: schedule.timezone,
+      });
     }
   }
-
   return users;
 }
 

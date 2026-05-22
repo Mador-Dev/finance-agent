@@ -7,7 +7,7 @@ import {
 } from "../schemas/index.js";
 import type { Exchange } from "../types/index.js";
 import { getPrice, getUsdIlsRate } from "./priceService.js";
-import { loadStrategyFile } from "./strategyFileService.js";
+import { loadUserStrategy } from "./strategyAccess.js";
 
 const STALE_DAYS_BY_TIMEFRAME: Record<Strategy["timeframe"], number> = {
   week: 14,
@@ -149,7 +149,10 @@ async function readPortfolioPosition(
   ticker: string
 ): Promise<PortfolioPositionSnapshot> {
   try {
-    const raw = await fs.readFile(ws.portfolioFile, "utf-8");
+    const { readPortfolio } = await import("./portfolioStore.js");
+    const stored = await readPortfolio(ws.userId);
+    if (!stored) return { found: false, exchange: null, shares: 0, currentILS: null, weightPct: null };
+    const raw = JSON.stringify(stored);
     const portfolio = PortfolioFileSchema.parse(JSON.parse(raw));
     const usdIlsRate = await getUsdIlsRate();
 
@@ -213,7 +216,7 @@ export async function assessStrategyBaselineForTicker(
   ticker: string
 ): Promise<StrategyBaselineAssessment> {
   const strategyPath = ws.strategyFile(ticker);
-  const loaded = await loadStrategyFile(strategyPath, { repair: true, tickerHint: ticker });
+  const loaded = await loadUserStrategy(ws.userId, strategyPath, { repair: true, tickerHint: ticker });
   if (!loaded.valid || !loaded.strategy) {
     return {
       trustLevel: "invalid",
