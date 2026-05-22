@@ -1,0 +1,10 @@
+{
+  "sharedFiles": [],
+  "templatedFiles": [
+    {
+      "source": "USER.md.template",
+      "target": "USER.md"
+    }
+  ],
+  "emptyFiles": []
+}

@@ -1,0 +1,102 @@
+# Node
+backend/node_modules/
+backend/dist/
+backend/logs/
+
+# Environment
+backend/.env
+**/.env
+
+# Auth files (never commit passwords)
+**/auth.json
+
+# Runtime data (user-generated, not tracked)
+data/tickers/
+data/reports/
+data/jobs/
+data/triggers/
+data/trade_journal.md
+data/state/
+users/
+
+# OpenClaw internals
+memory/
+canvas/
+.openclaw/
+.clawhub/
+
+# Backups
+*.bak
+*.bak2
+
+# Retired
+dashboard.retired/
+
+# Worktrees
+.worktrees/
+
+# OS
+.DS_Store
+data/research/
+*.bak3
+backend/src/logs/
+
+# ── GSD baseline (auto-generated) ──
+.gsd-id
+.mcp.json
+.bg-shell/
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+*.log
+coverage/
+.cache/
+tmp/
+
+# Local agent harness artifacts
+.agents/
+.claude/
+skills-lock.json
+skills/code-review-excellence
+skills/docx
+skills/error-handling-patterns
+skills/find-skills
+skills/git-advanced-workflows
+skills/pdf
+skills/postgresql-table-design
+skills/pptx
+skills/skill-creator
+skills/sql-code-review
+skills/sql-optimization
+skills/xlsx
+
+# Generated/runtime artifacts
+data/cache/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/observability-export*.json
+.artifacts/
+state/
+.superpowers/
+logs/
+
+# Kiro related
+.kiro

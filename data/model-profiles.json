@@ -1,0 +1,26 @@
+{
+  "testing": {
+    "orchestrator": "openrouter/deepseek/deepseek-v3.2",
+    "analysts": "openrouter/google/gemini-2.5-flash",
+    "risk": "openrouter/google/gemini-2.5-flash",
+    "researchers": "openrouter/deepseek/deepseek-v3.2"
+  },
+  "production": {
+    "orchestrator": "claude-opus-4-6",
+    "analysts": "claude-sonnet-4-6",
+    "risk": "claude-haiku-4-5-20251001",
+    "researchers": "claude-opus-4-6"
+  },
+  "free": {
+    "orchestrator": "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+    "analysts": "openrouter/google/gemma-3-27b-it:free",
+    "risk": "openrouter/google/gemma-3-27b-it:free",
+    "researchers": "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+  },
+  "qwen": {
+    "orchestrator": "openrouter/qwen/qwen3.6-plus",
+    "analysts": "openrouter/qwen/qwen3.6-plus",
+    "risk": "openrouter/qwen/qwen3.6-plus",
+    "researchers": "openrouter/qwen/qwen3.6-plus"
+  }
+}

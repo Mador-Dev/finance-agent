@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "./agents"
+  ],
+  "graphs": {
+    "bootstrap_strategy_agent": "./agents/bootstrap_agent/deep_agent.py:build_bootstrap_deep_agent"
+  },
+  "env": "./agents/.env"
+}

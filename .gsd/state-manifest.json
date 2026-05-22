@@ -1,0 +1,405 @@
+{
+  "version": 1,
+  "exported_at": "2026-05-19T14:44:08.606Z",
+  "milestones": [
+    {
+      "id": "M001",
+      "title": "Postgres-Owned Product State Migration",
+      "status": "active",
+      "depends_on": [],
+      "created_at": "2026-05-19T14:42:26.284Z",
+      "completed_at": null,
+      "vision": "Continue the cleanup phase by retiring OpenClaw-era and VPS-local filesystem ownership of production application state. By the end of this milestone, core user, job, control, notification, report-index, strategy, onboarding, and portfolio state should be backend/Postgres-owned, with filesystem use explicitly limited to user prompts, derived artifacts, cold archives, and disposable caches. This is the foundation for deploy-anywhere infrastructure: managed backups, multiple environments, GitOps-compatible rollout, and eventual service splitting.",
+      "success_criteria": [
+        "Every migrated domain has an explicit source-of-truth declaration: Postgres product state, derived artifact, prompt/workspace file, cold archive, or disposable cache.",
+        "Live backend reads/writes for completed domains use Postgres, not `users/*` or root `data/*` JSON files.",
+        "Temporary filesystem bridges exist only for migration/parity and have deletion guards or explicit follow-up removal points.",
+        "Migration scripts are idempotent, dry-run by default, do not print secrets, and archive destructive legacy inputs to `migration_archive`.",
+        "New users are not provisioned with JSON files for domains already retired to Postgres.",
+        "The milestone produces a remaining-state map identifying what still blocks deploy-anywhere infrastructure, backups, multiple environments, GitOps, and future service splitting."
+      ],
+      "key_risks": [
+        {
+          "risk": "Accidentally preserving deprecated filesystem abstractions while making them DB-backed",
+          "whyItMatters": "That would keep OpenClaw/VPS-local assumptions alive and make future deploy-anywhere work harder rather than easier."
+        },
+        {
+          "risk": "Auth/profile/control migration can lock out users or weaken admin controls",
+          "whyItMatters": "These domains protect access and operational safety; cutover must be parity-proven and reversible."
+        },
+        {
+          "risk": "Job lifecycle cutover can break orchestration observability or admin intervention",
+          "whyItMatters": "The step queue is already Postgres-backed, but stale JSON job paths still appear in routes/scripts and can create split-brain behavior."
+        },
+        {
+          "risk": "Portfolio migration can corrupt financial truth",
+          "whyItMatters": "Holdings and cost basis are user-critical; ledger-derived state must match existing portfolio JSON before filesystem canonicality is retired."
+        },
+        {
+          "risk": "Report and strategy artifacts are large and schema-varied",
+          "whyItMatters": "Blindly moving every artifact into Postgres can create bloat and poor boundaries; product state and derived artifacts need separate treatment."
+        }
+      ],
+      "proof_strategy": [
+        {
+          "riskOrUnknown": "Deprecated filesystem abstractions are accidentally preserved",
+          "retireIn": "S01",
+          "whatWillBeProven": "there is a tracked state-ownership inventory, parity check coverage, and guardrail list for paths that must not be reintroduced as production sources of truth"
+        },
+        {
+          "riskOrUnknown": "Job lifecycle split-brain",
+          "retireIn": "S02",
+          "whatWillBeProven": "admin/user job reads, writes, supersession, and watchdog behavior operate from Postgres step-queue tables without live JSON job files"
+        },
+        {
+          "riskOrUnknown": "Auth/profile/control cutover safety",
+          "retireIn": "S03-S05",
+          "whatWillBeProven": "login/session/token version, profile/config/model selection, and control restrictions work from Postgres with parity-backed migration and rollback path"
+        },
+        {
+          "riskOrUnknown": "Portfolio correctness",
+          "retireIn": "S09",
+          "whatWillBeProven": "ledger-derived holdings match current portfolio JSON fixtures/users before `portfolio.json` stops being canonical"
+        },
+        {
+          "riskOrUnknown": "Report/strategy artifact boundary",
+          "retireIn": "S06-S08",
+          "whatWillBeProven": "report index and strategies are DB-owned while report detail artifacts have an explicit DB-or-artifact-store ownership decision with working reads"
+        }
+      ],
+      "verification_contract": "Run backend tests for each migrated service/route, migration dry-run and commit-mode tests against fixtures, parity verification for legacy JSON vs Postgres rows, and static/path guard checks for retired filesystem writes.",
+      "verification_integration": "Exercise real backend route/service flows for each retired domain: auth/session, admin controls, jobs, notifications, reports, strategies, onboarding, and portfolio. Verify a backend restart does not need retired JSON files for completed domains.",
+      "verification_operational": "Verify migration scripts are dry-run by default, fail loudly on corrupt input, archive destructive inputs to `migration_archive`, avoid secret logging, and leave enough DB state for managed backup/restore. Track remaining VPS-local assumptions at milestone end.",
+      "verification_uat": "Human review of the final state-ownership map and deploy-anywhere blocker list; product behavior should be unchanged except for improved reliability/operability.",
+      "definition_of_done": [
+        "All slices are completed or explicitly descoped with rationale.",
+        "Every completed domain has Postgres as the documented source of truth and no live filesystem write path for canonical product state.",
+        "Retired filesystem paths are either deleted, archived through `migration_archive`, or guarded so they cannot silently return as canonical state.",
+        "Migration/parity evidence exists for each cutover domain.",
+        "Docs explain remaining filesystem categories and why they are retained.",
+        "A final infrastructure-readiness note lists remaining blockers for managed backups, multiple environments, GitOps, and service splitting."
+      ],
+      "requirement_coverage": "Covers R001 and R002. R001 is directly advanced by every state-retirement slice. R002 is partially advanced by eliminating host-local production state assumptions; full deploy-anywhere infrastructure, backups, multi-environment config, GitOps, and service splitting remain later milestones.",
+      "boundary_map_markdown": "### State ownership categories\n\nProduces:\n- `Postgres product state`: operational/user-facing/cross-session/queryable state owned by backend tables.\n- `Derived artifact`: regenerated/exported files whose loss does not destroy product truth.\n- `Workspace prompt`: user/agent prompt material such as `USER.md`.\n- `Cold archive`: historical material retained for audit/debugging, not live reads.\n- `Disposable cache`: external/cache data safe to evict.\n\n### Migration contract\n\nProduces:\n- Idempotent migration scripts with dry-run default.\n- Parity verifiers comparing legacy file fixtures to DB rows until cutover.\n- `migration_archive` entries before destructive deletion/archive.\n- Feature flags or rollback paths where user lockout/orchestration risk exists.\n\n### Backend ownership invariant\n\nDownstream slices consume the invariant that completed domains must not read or write `users/*` or root `data/*` JSON as canonical production state.",
+      "sequence": 0
+    }
+  ],
+  "slices": [
+    {
+      "milestone_id": "M001",
+      "id": "S01",
+      "title": "State ownership inventory and migration safety gates",
+      "status": "pending",
+      "risk": "high",
+      "depends": [],
+      "demo": "A migration-state inventory and parity/guard test suite identifies every remaining `users/*` and root `data/*` production-state path, classifies retained filesystem paths, and fixes known parity gaps before destructive cutovers.",
+      "created_at": "2026-05-19T14:44:08.597Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Establish the safety baseline for the migration phase: identify all live filesystem-backed production state, fix verifier blind spots, and add guardrails that distinguish retired product-state paths from legitimate artifacts/caches/prompts.",
+      "success_criteria": "- A durable state-ownership inventory exists for root `data/`, `users/*`, `shared/user-workspace`, and report/strategy/job/profile/control/portfolio files.\n- The notification migration path mismatch is fixed and covered by tests.\n- Parity verification covers the domains already dual-written in Phase 1: users, strategies, report index, notifications, escalations, and synthetic portfolio lots.\n- A retired-path guard or static check catches accidental reintroduction of canonical writes to paths already retired by this milestone.\n- The inventory explicitly marks `USER.md`, caches, cold archives, and report artifacts as non-product-state unless a later slice changes ownership.",
+      "proof_level": "Contract and fixture proof: migration/verifier tests plus a generated/maintained state-ownership map. No production cutover in this slice.",
+      "integration_closure": "Downstream slices consume the inventory and guardrail list as the contract for what must be retired or retained.",
+      "observability_impact": "Adds clearer migration diagnostics: counted paths, classified ownership, parity failures, corrupt inputs, and skipped/deferred domains.",
+      "sequence": 1,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S02",
+      "title": "Retire filesystem job lifecycle",
+      "status": "pending",
+      "risk": "high",
+      "depends": [
+        "S01"
+      ],
+      "demo": "User/admin job listing, job detail, supersession, watchdog/reconciliation, and job-trigger flows operate from Postgres `jobs`/work-item tables with no live dependency on `users/<id>/data/jobs/*.json`.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Remove the filesystem job store as a production source of truth and consolidate all job lifecycle state on the existing Postgres step queue model.",
+      "success_criteria": "- Live job reads/writes in user routes, admin routes, job trigger flow, and supersession tools use `jobs`, `ticker_work_items`, `step_work_items`, and `step_lifecycle_events`.\n- Legacy JSON job files are import/archive-only and are not created for new jobs.\n- Any remaining compatibility adapter is explicitly migration-only and guarded.\n- Tests cover job creation, listing, status transitions, supersession/cancellation, stale-job handling, and backend restart without job JSON files.\n- Legacy job JSON files are archived/deleted after parity where safe.",
+      "proof_level": "Integration proof against Postgres-backed services and route tests; restart proof that job state survives without filesystem job files.",
+      "integration_closure": "Produces the canonical job/orchestration boundary for downstream notification/report/onboarding slices.",
+      "observability_impact": "Improves job observability by centralizing status, lifecycle events, failures, and admin actions in queryable tables.",
+      "sequence": 2,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S03",
+      "title": "Retire auth.json and token-version filesystem state",
+      "status": "pending",
+      "risk": "high",
+      "depends": [
+        "S01"
+      ],
+      "demo": "Login, registration, password changes, JWT validation, and force-logout/token-version checks use the `users` table and continue working after `auth.json` is absent.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move authentication credentials and session invalidation state fully to backend/Postgres ownership without preserving `auth.json` as a live state file.",
+      "success_criteria": "- Auth middleware and auth routes read/write `users.password_hash` and `users.token_version`.\n- Onboarding/registration creates the DB user record as canonical auth state.\n- Token-version increments no longer mutate `users/<id>/auth.json`.\n- Migration imports existing auth hashes/token versions without printing secrets.\n- Tests cover login, invalid token version, password change, registration, and missing `auth.json` after migration.",
+      "proof_level": "Route/service integration tests plus migration fixture proof.",
+      "integration_closure": "Downstream profile/control slices can assume `users` exists and is canonical for user identity/auth.",
+      "observability_impact": "Auth failures should emit safe structured context: user id when known, reason class, no hashes/secrets.",
+      "sequence": 3,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S04",
+      "title": "Retire profile.json and user config.json",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S03"
+      ],
+      "demo": "User display name, schedule, rate limits, plan/model tier/profile selection, and related admin/user surfaces operate from Postgres even when `profile.json` and `data/config.json` are absent.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move user profile/configuration state out of per-user files and into typed backend-owned DB state.",
+      "success_criteria": "- User profile reads/writes use `users` columns and any needed new tables/columns for plan/config fields not yet modeled.\n- Model tier/profile selection no longer depends on `users/<id>/data/config.json`.\n- Channel bindings/secrets remain in `channel_bindings`/`encrypted_secrets`, not profile JSON.\n- Migration imports schedule, rate limits, display name, model tier/profile, and plan if retained.\n- Tests cover profile updates, admin limit changes, model tier/profile selection, and missing legacy files.",
+      "proof_level": "Route/service tests plus migration parity proof.",
+      "integration_closure": "Produces a canonical user-settings boundary consumed by job admission, scheduler, transports, and admin UX.",
+      "observability_impact": "Profile/config updates become auditable and queryable; invalid legacy config is archived instead of silently ignored.",
+      "sequence": 4,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S05",
+      "title": "Retire system and user control JSON",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S03"
+      ],
+      "demo": "System lock/broadcast state, user restrictions/banners/expiry, and token-version force logout are DB-owned and continue working after `data/system-control.json` and `users/<id>/control.json` are absent.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move operational control state into Postgres so admin restrictions and system-wide lock state are portable, auditable, and not VPS-file-dependent.",
+      "success_criteria": "- Add or reuse DB structures for full system control and user control shape, not just `users.restriction`.\n- `controlService` reads/writes DB state and auto-expiry persists correctly.\n- Admin routes and middleware consume the DB-backed control service.\n- Migration archives existing control JSON and imports active controls.\n- Tests cover lock/unlock, restriction set/clear, expiry auto-clear, force logout, and backend restart.",
+      "proof_level": "Integration and route tests against Postgres-backed control state.",
+      "integration_closure": "Provides a stable admin-control boundary for production operations and future multi-environment deployments.",
+      "observability_impact": "Control mutations should be visible via admin audit logs and safe structured logs with actor/action/target.",
+      "sequence": 5,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S06",
+      "title": "Retire support-messages JSON",
+      "status": "pending",
+      "risk": "low",
+      "depends": [
+        "S01"
+      ],
+      "demo": "Support submissions, admin listing, and status updates use a `support_messages` DB table and continue working without `data/support-messages.json`.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move the support inbox from root filesystem JSON into queryable backend-owned Postgres state.",
+      "success_criteria": "- Create typed DB entity/store/schema for support messages.\n- `supportService` and routes use DB for submit/list/status changes.\n- Existing `data/support-messages.json` imports idempotently and archives before deletion.\n- Tests cover submit, list limit/order, status update, migration import, and missing legacy file.\n- Root `data/support-messages.json` is no longer written.",
+      "proof_level": "Contract and route/service tests; low-risk migration fixture proof.",
+      "integration_closure": "Demonstrates the simplest full retire pattern to copy for larger domains.",
+      "observability_impact": "Support events become queryable by status/user/time and auditable for admin work.",
+      "sequence": 6,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S07",
+      "title": "Retire notification JSON outbox and feed event ambiguity",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S01",
+        "S04"
+      ],
+      "demo": "Notification listing, unread counts, delivery updates, mark-read, and channel publish dedupe use `notifications_outbox`; legacy notification JSON is archive-only. Feed events are either modeled explicitly or classified as non-canonical artifacts.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Complete the existing notification migration and remove JSON outbox split-brain.",
+      "success_criteria": "- `notificationService` reads/mark-read/delivery-update paths use `notifications_outbox`.\n- Legacy notification JSON is imported from the correct live path and no longer written.\n- Notification preferences currently embedded in profile JSON are DB-owned or explicitly folded into user settings.\n- `feed/events.json` is either migrated to a DB table if product-visible or classified/removed if obsolete.\n- Tests cover dedupe, mark-read, unread filtering, delivery error update, migration parity, and missing JSON files.",
+      "proof_level": "Integration proof through notification routes/services and migration parity fixtures.",
+      "integration_closure": "Downstream report/job slices can rely on DB notifications for user-visible delivery state.",
+      "observability_impact": "Delivery failures and unread/read transitions become queryable and not hidden in per-user feed files.",
+      "sequence": 7,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S08",
+      "title": "Retire report index JSON and decide report artifact ownership",
+      "status": "pending",
+      "risk": "high",
+      "depends": [
+        "S02",
+        "S07"
+      ],
+      "demo": "Report feed/index routes use `report_batches` and `report_index` as source of truth; report detail artifacts have an explicit ownership model with working reads and no accidental local canonical index files.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Complete the existing report-index migration and make a deliberate boundary decision for large analyst report artifacts.",
+      "success_criteria": "- Report feed/index reads use `report_batches`/`report_index`, not `data/reports/index/*.json`.\n- Report index writes stop producing canonical JSON pages.\n- Existing report indexes import idempotently with job foreign-key ordering handled.\n- Report detail JSON files are classified: DB JSONB artifacts, DB metadata plus artifact storage, or derived exports. The chosen model is implemented for live reads if this slice includes artifact cutover, or documented as a blocking downstream slice if not.\n- Tests cover report list/detail/index behavior, missing index files, and migration parity.",
+      "proof_level": "Integration proof for report feed/index; architecture proof plus tests for whichever report-detail ownership boundary is chosen.",
+      "integration_closure": "Produces stable report feed/index contracts for UI and notification deep links.",
+      "observability_impact": "Report batches and per-ticker entries are queryable by user/job/mode/date; artifact read failures get explicit diagnostics.",
+      "sequence": 8,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S09",
+      "title": "Retire strategy JSON as canonical state",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S08"
+      ],
+      "demo": "Quick check, daily/full/deep-dive, report views, and strategy exports use the `strategies` table as canonical; `strategy.json` is absent, derived, or export-only.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Finish the strategy migration that Phase 1 started by flipping readers to the DB store and demoting JSON strategy files to derived artifacts only.",
+      "success_criteria": "- Live strategy reads use `strategyStore` rather than `strategyFileService` for canonical state.\n- Writes update `strategies` transactionally; file export, if kept, is explicitly derived and non-critical.\n- Corrupt/missing legacy strategy JSON no longer breaks live product behavior after migration.\n- Tests cover strategy read/write/list, full-report promotion, quick-check escalation inputs, report strategy display, and derived export if retained.\n- Legacy strategy files are archived/deleted or guarded from canonical writes.",
+      "proof_level": "Service and integration tests across quick check/full report/report routes.",
+      "integration_closure": "Downstream portfolio/onboarding logic can consume strategy state without needing ticker folders.",
+      "observability_impact": "Strategy changes become queryable by user/ticker/version/update time and no longer hide repairs in file rewrites.",
+      "sequence": 9,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S10",
+      "title": "Retire state.json for lifecycle and onboarding state",
+      "status": "pending",
+      "risk": "high",
+      "depends": [
+        "S03",
+        "S04",
+        "S09"
+      ],
+      "demo": "Onboarding, bootstrap progress, active-user eligibility, pending deep dives, last daily/full report timestamps, and state transitions are DB-owned and continue working without `data/state.json`.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move lifecycle/onboarding/bootstrap state into typed DB ownership so user status is not tied to per-user filesystem files.",
+      "success_criteria": "- Add or reuse DB structures for lifecycle/onboarding/bootstrap fields that are currently only in `state.json`.\n- `stateService`, onboarding routes, scheduler eligibility, and repair/transition logic use DB state.\n- State transitions remain validated and reject illegal transitions.\n- Migration imports existing `state.json`, archives corrupt input, and does not create state files for new users.\n- Tests cover transition rules, active eligibility, bootstrap progress, onboarding updates, missing legacy file, and backend restart.",
+      "proof_level": "Route/service integration tests plus transition-rule unit tests and migration parity fixtures.",
+      "integration_closure": "Produces the canonical user lifecycle boundary for scheduler, onboarding, job admission, and UI state.",
+      "observability_impact": "State transitions should record reason, actor/source where available, and timestamp in queryable DB state/logs.",
+      "sequence": 10,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S11",
+      "title": "Retire portfolio.json as canonical holdings",
+      "status": "pending",
+      "risk": "high",
+      "depends": [
+        "S10"
+      ],
+      "demo": "Portfolio API, risk snapshots, strategy baseline inputs, and active-user eligibility derive holdings from `position_transactions`/portfolio DB state and match legacy portfolio JSON fixtures before `portfolio.json` is demoted.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Move holdings and position history to DB-owned ledger semantics without losing financial correctness.",
+      "success_criteria": "- Existing portfolio JSON imports into `position_transactions` via synthetic opening lots or explicit ledger migration.\n- Portfolio reads derive current holdings from non-superseded transactions and account metadata if needed.\n- Position add/edit/delete flows append or supersede ledger rows rather than rewriting JSON holdings.\n- Risk and strategy baseline services consume ledger-derived holdings.\n- Parity tests prove ledger-derived holdings equal representative `portfolio.json` fixtures/users before cutover.\n- `portfolio.json` is no longer canonical; if exported, it is derived only.",
+      "proof_level": "High-confidence fixture and integration proof: holdings parity, transaction replay, API flows, risk calculation, and restart without portfolio JSON.",
+      "integration_closure": "Completes the hardest user-data migration and removes the main VPS-local product-state file.",
+      "observability_impact": "Portfolio mutations become auditable, replayable, and recoverable from managed DB backups.",
+      "sequence": 11,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    },
+    {
+      "milestone_id": "M001",
+      "id": "S12",
+      "title": "Stop provisioning retired product-state files and document deploy-anywhere blockers",
+      "status": "pending",
+      "risk": "medium",
+      "depends": [
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "S07",
+        "S08",
+        "S09",
+        "S10",
+        "S11"
+      ],
+      "demo": "New user workspaces contain only legitimate workspace/prompt/artifact scaffolding, not retired DB-owned JSON state; docs list remaining deploy-anywhere blockers and service-splitting candidates.",
+      "created_at": "2026-05-19T14:44:08.598Z",
+      "completed_at": null,
+      "full_summary_md": "",
+      "full_uat_md": "",
+      "goal": "Harvest the cleanup: remove retired file creation, document retained filesystem categories, and produce the infrastructure-readiness map for the next milestone.",
+      "success_criteria": "- `workspaceService` no longer creates DB-owned JSON files for domains completed in this milestone.\n- `shared/user-workspace` remains limited to prompt/template material such as `USER.md`.\n- Root `data/*` and `users/*` retained paths are documented as prompt/artifact/archive/cache only.\n- Tests cover new workspace creation without retired product-state files.\n- A deploy-anywhere blocker document identifies remaining host-local assumptions, backup requirements, environment split, GitOps needs, and candidate service boundaries.",
+      "proof_level": "Integration proof through user creation/workspace setup plus documentation review.",
+      "integration_closure": "This slice closes the milestone and provides the input for the next infrastructure/platform milestone.",
+      "observability_impact": "Reduces hidden local state and makes remaining operational assumptions explicit for future agents/operators.",
+      "sequence": 12,
+      "replan_triggered_at": null,
+      "is_sketch": 0,
+      "sketch_scope": ""
+    }
+  ],
+  "tasks": [],
+  "decisions": [
+    {
+      "seq": 1,
+      "id": "D001",
+      "when_context": "Next DB/backend migration milestone planning",
+      "scope": "architecture",
+      "decision": "How to handle remaining filesystem-backed production state during cleanup",
+      "choice": "Retire filesystem ownership domain-by-domain rather than preserving legacy-compatible facades; temporary bridges are allowed only for import/parity and must be removed or guarded.",
+      "rationale": "The cleanup goal is backend/Postgres-owned product state that can support portable deployments, backups, multiple environments, and service splitting. Investing in better legacy filesystem services would keep deprecated OpenClaw-era assumptions alive.",
+      "revisable": "Yes, for artifact storage strategy only; product-state ownership remains DB/backend.",
+      "made_by": "human",
+      "source": "discussion",
+      "superseded_by": null
+    }
+  ],
+  "verification_evidence": []
+}
