@@ -11,7 +11,7 @@ const getClerkToken = async (): Promise<string | null> => {
 
 const baseURL =
   (import.meta.env.VITE_AGENTS_API_BASE_URL as string | undefined)?.trim() ||
-  "http://localhost:8090/api";
+  "http://localhost:8090/agents";
 
 export const agentsApiClient = axios.create({
   baseURL,

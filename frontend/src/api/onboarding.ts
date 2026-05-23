@@ -144,5 +144,5 @@ export async function completePositionGuidance(payload: {
 export async function startBootstrap(
   payload: BootstrapStartPayload
 ): Promise<{ jobId: string; status: string; totalTickers: number }> {
-  return (await apiClient.post("/agents/bootstrap/start", payload)).data;
+  return (await apiClient.post("/agents/bootstrap/start", payload, { timeout: 60_000 })).data;
 }

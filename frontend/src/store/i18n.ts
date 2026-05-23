@@ -588,7 +588,7 @@ export const translations: Translations = {
     onboardAcross: "across",
     onboardAt: "at",
     onboardDailyAt: "Daily at",
-    onboardLaunchBtn: "Launch Startix 🚀",
+    onboardLaunchBtn: "Launch Startix",
     // Greetings
     greeting1: "Strategy check — let's see what needs attention 📊",
     greeting2: "Every position has a story. Let's read yours 📈",
@@ -1051,7 +1051,7 @@ export const translations: Translations = {
     onboardAcross: "על פני",
     onboardAt: "ב-",
     onboardDailyAt: "יומי ב-",
-    onboardLaunchBtn: "הפעלת Startix 🚀",
+    onboardLaunchBtn: "הפעלת Startix",
     // Greetings
     greeting1: "בדיקת אסטרטגיה — בואו נראה מה דורש תשומת לב 📊",
     greeting2: "לכל פוזיציה יש סיפור. בואו נקרא את שלך 📈",

@@ -20,9 +20,9 @@ FastAPI host for **LangChain-first multi-agent** workflows (port **8090**).
 
 ## API
 
-- `POST /api/bootstrap/start`
-- `/api/jobs`, `/api/jobs/trigger` (header `X-User-Id`)
-- `/api/chat/*`
+- `POST /agents/bootstrap/start`
+- `/agents/jobs`, `/agents/jobs/trigger` (header `X-User-Id`)
+- `/agents/chat/*`
 
 ## Persistence
 

@@ -44,19 +44,32 @@ export function PointsBadge() {
         marginTop: 10,
         display: "inline-flex",
         alignItems: "center",
-        padding: "3px 10px",
+        gap: 6,
+        padding: "7px 12px 6px",
         borderRadius: 999,
-        border: `0.5px solid ${balance.exhausted ? "rgba(226,80,80,0.35)" : "rgba(66,201,122,0.28)"}`,
-        background: balance.exhausted ? "rgba(226,80,80,0.08)" : "rgba(66,201,122,0.08)",
+        border: `2px solid ${balance.exhausted ? "rgba(185,28,28,0.72)" : "rgba(22,101,52,0.72)"}`,
+        background: balance.exhausted ? "#ffe5e5" : "#effed9",
+        boxShadow: balance.exhausted ? "4px 4px 0 rgba(185,28,28,0.18)" : "4px 4px 0 rgba(22,101,52,0.18)",
         pointerEvents: "none",
       }}
     >
       <span
+        aria-hidden="true"
         style={{
-          fontSize: 10,
-          fontWeight: 700,
-          color: balance.exhausted ? "var(--color-red)" : "var(--color-green)",
-          letterSpacing: "0.02em",
+          width: 10,
+          height: 10,
+          borderRadius: "50%",
+          background: balance.exhausted ? "#ef4444" : "#65a30d",
+          border: "2px solid rgba(34,30,26,0.75)",
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 800,
+          color: balance.exhausted ? "#991b1b" : "#166534",
+          letterSpacing: "0.01em",
         }}
       >
         {label}

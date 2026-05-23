@@ -16,6 +16,9 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
   const bg = hasScore ? scoreBg(tintScore) : "var(--bg-surface)";
   const border = hasScore ? scoreBorder(tintScore) : "var(--bg-border-mid)";
   const scoreTextColor = hasScore ? scoreColor(tintScore) : "var(--text-tertiary)";
+  const scoreShadow = hasScore ? scoreBorder(tintScore) : "rgba(17, 24, 39, 0.18)";
+  const stickerBg = hasScore ? "rgba(255,250,232,0.96)" : "rgba(255,255,255,0.92)";
+  const stickerAccent = "rgba(17, 24, 39, 0.96)";
 
   const pnlColor =
     pnlPositive === true
@@ -28,59 +31,50 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
     <div
       style={{
         background: bg,
-        border: `0.5px solid ${border}`,
-        borderRadius: "var(--radius-lg)",
-        padding: "16px 16px 14px",
+        border: `2px solid ${border}`,
+        borderRadius: 22,
+        padding: "18px 18px 16px",
         margin: "0 16px",
+        boxShadow: `0 6px 0 ${scoreShadow}`,
+        position: "relative",
+        overflow: "hidden",
       }}
     >
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          insetInlineEnd: -20,
+          top: -26,
+          width: 120,
+          height: 120,
+          borderRadius: "999px",
+          background: "rgba(255,255,255,0.18)",
+          filter: "blur(1px)",
+        }}
+      />
+
       {/* Top row: score ←→ value */}
       <div
         style={{
           display: "flex",
-          alignItems: "flex-start",
+          alignItems: "stretch",
           justifyContent: "space-between",
-          gap: 12,
+          gap: 14,
+          position: "relative",
+          zIndex: 1,
         }}
       >
-        {/* Left: score number + "Portfolio score" label */}
+        {/* Left: total value + pnl */}
         <div>
-          <div
-            style={{
-              fontSize: 42,
-              fontWeight: 700,
-              lineHeight: 1,
-              letterSpacing: "-2px",
-              color: scoreTextColor,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {hasScore ? (portfolioScore as number) : "—"}
-          </div>
-          <div
-            style={{
-              fontSize: 9,
-              fontWeight: 400,
-              color: "var(--text-tertiary)",
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
-              marginTop: 4,
-            }}
-          >
-            Portfolio score
-          </div>
-        </div>
-
-        {/* Right: ₪value + pnl */}
-        <div style={{ textAlign: "end" }}>
           <div
             style={{
               fontSize: 18,
               fontWeight: 700,
+              lineHeight: 1,
               color: "var(--text-primary)",
               letterSpacing: "-0.5px",
               fontVariantNumeric: "tabular-nums",
-              lineHeight: 1,
             }}
           >
             {value}
@@ -89,27 +83,97 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
             <div
               style={{
                 fontSize: 10,
-                fontWeight: 400,
+                fontWeight: 700,
                 color: pnlColor,
                 fontVariantNumeric: "tabular-nums",
-                marginTop: 4,
+                marginTop: 6,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 9px",
+                borderRadius: 999,
+                border: "1.5px solid rgba(17,24,39,0.12)",
+                background: "rgba(255,255,255,0.72)",
               }}
             >
               {pnlLine}
             </div>
           )}
         </div>
+
+        {/* Right: cartoon score sticker */}
+        <div
+          style={{
+            minWidth: 124,
+            alignSelf: "flex-start",
+            background: stickerBg,
+            border: `2.5px solid ${stickerAccent}`,
+            borderRadius: 20,
+            boxShadow: `5px 5px 0 rgba(34, 30, 26, 0.28)`,
+            padding: "11px 12px 10px",
+            transform: "rotate(1.5deg)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 8,
+              fontWeight: 800,
+              color: "rgba(17, 24, 39, 0.78)",
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+              textAlign: "center",
+            }}
+          >
+            Portfolio Score
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "center",
+              gap: 4,
+              marginTop: 6,
+              color: stickerAccent,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 32,
+                lineHeight: 1,
+                fontWeight: 900,
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "-0.06em",
+                color: "rgba(17, 24, 39, 0.96)",
+              }}
+            >
+              {hasScore ? (portfolioScore as number) : "—"}
+            </span>
+            <span style={{ fontSize: 12, lineHeight: 1, color: "#f59e0b" }}>★</span>
+          </div>
+          <div
+            style={{
+              marginTop: 4,
+              textAlign: "center",
+              fontSize: 10,
+              fontWeight: 700,
+              color: "rgba(17, 24, 39, 0.78)",
+            }}
+          >
+            {hasScore ? (portfolioScore as number) >= 75 ? "Sharp" : (portfolioScore as number) >= 50 ? "Steady" : "Watchlist" : "Pending"}
+          </div>
+        </div>
       </div>
 
       {/* Score bar — 3px track */}
-      <div style={{ marginTop: 14 }}>
+      <div style={{ marginTop: 16, position: "relative", zIndex: 1 }}>
         <div
           style={{
             position: "relative",
-            height: 3,
-            borderRadius: 2,
-            background: "rgba(255,255,255,0.07)",
+            height: 8,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.45)",
             overflow: "hidden",
+            border: "1px solid rgba(17,24,39,0.08)",
           }}
         >
           <div
@@ -120,7 +184,7 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
               bottom: 0,
               width: hasScore ? `${Math.max(0, Math.min(100, portfolioScore as number))}%` : "0%",
               background: scoreTextColor,
-              borderRadius: 2,
+              borderRadius: 999,
               transition: "width 260ms ease",
             }}
           />
@@ -131,18 +195,18 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
           style={{
             display: "flex",
             justifyContent: "space-between",
-            marginTop: 5,
+            marginTop: 6,
             fontSize: 9,
-            fontWeight: 400,
-            color: "rgba(255,255,255,0.2)",
-            textTransform: "lowercase",
-            letterSpacing: "0.02em",
+            fontWeight: 700,
+            color: "rgba(17,24,39,0.4)",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          <span>0 poor</span>
-          <span>50 stable</span>
-          <span>100 excellent</span>
+          <span>0 rough</span>
+          <span>50 steady</span>
+          <span>100 golden</span>
         </div>
       </div>
 
@@ -153,8 +217,10 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
             margin: "12px 0 0",
             fontSize: "var(--text-sm)",
             lineHeight: 1.5,
-            color: "var(--text-secondary)",
-            fontWeight: 400,
+            color: "rgba(17,24,39,0.72)",
+            fontWeight: 500,
+            position: "relative",
+            zIndex: 1,
           }}
         >
           {description}

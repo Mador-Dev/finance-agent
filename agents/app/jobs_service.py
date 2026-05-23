@@ -134,7 +134,7 @@ class JobsService:
             job.status = "completed"
         job.error = "; ".join(f"{t}: {r}" for t, r in failures.items()) or None
         job.result = {
-            "tickers": [item.model_dump() for item in strategies],
+            "strategies": [item.model_dump() for item in strategies],
             "completedTickers": completed,
             "failedTickers": list(failures.keys()),
         }

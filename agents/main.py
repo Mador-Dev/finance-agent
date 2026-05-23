@@ -57,7 +57,7 @@ async def health() -> dict[str, str]:
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
 
-@app.post("/api/bootstrap/start", response_model=BootstrapStartResponse)
+@app.post("/agents/bootstrap/start", response_model=BootstrapStartResponse)
 async def start_bootstrap(
     payload: BootstrapStartRequest,
     user_id: str = Depends(require_user),
@@ -68,7 +68,7 @@ async def start_bootstrap(
     return BootstrapStartResponse(jobId=job.jobId, status=job.status, totalTickers=job.totalTickers)
 
 
-@app.get("/api/bootstrap/jobs/{user_id}/{job_id}")
+@app.get("/agents/bootstrap/jobs/{user_id}/{job_id}")
 async def get_bootstrap_job(
     user_id: str,
     job_id: str,
@@ -82,7 +82,7 @@ async def get_bootstrap_job(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/bootstrap/jobs/{user_id}/{job_id}/result", response_model=BootstrapJobResult)
+@app.get("/agents/bootstrap/jobs/{user_id}/{job_id}/result", response_model=BootstrapJobResult)
 async def get_bootstrap_result(
     user_id: str,
     job_id: str,
@@ -96,7 +96,7 @@ async def get_bootstrap_result(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/bootstrap/strategies/{user_id}")
+@app.get("/agents/bootstrap/strategies/{user_id}")
 async def list_bootstrap_strategies(
     user_id: str,
     jwt_user: str = Depends(require_user),
@@ -109,7 +109,7 @@ async def list_bootstrap_strategies(
 # ── Jobs ─────────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/jobs", response_model=JobsResponse)
+@app.get("/agents/jobs", response_model=JobsResponse)
 async def list_jobs(user_id: str = Depends(require_user)) -> JobsResponse:
     try:
         return jobs_service.list_jobs(user_id)
@@ -117,7 +117,7 @@ async def list_jobs(user_id: str = Depends(require_user)) -> JobsResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/api/jobs/{job_id}")
+@app.get("/agents/jobs/{job_id}")
 async def get_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
     try:
         return jobs_service.get_job(user_id, job_id).model_dump()
@@ -125,7 +125,7 @@ async def get_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/jobs/trigger", response_model=TriggerResponse, status_code=201)
+@app.post("/agents/jobs/trigger", response_model=TriggerResponse, status_code=201)
 async def trigger_job(
     payload: TriggerJobRequest,
     user_id: str = Depends(require_user),
@@ -139,7 +139,7 @@ async def trigger_job(
     return TriggerResponse(jobId=job.id, job=job)
 
 
-@app.delete("/api/jobs/{job_id}")
+@app.delete("/agents/jobs/{job_id}")
 async def cancel_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
     try:
         job = await jobs_service.cancel(user_id, job_id)
@@ -148,7 +148,7 @@ async def cancel_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
     return {"cancelled": True, "job": job.model_dump()}
 
 
-@app.post("/api/jobs/{job_id}/resume")
+@app.post("/agents/jobs/{job_id}/resume")
 async def resume_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
     try:
         job = await jobs_service.resume(user_id, job_id)
@@ -160,7 +160,7 @@ async def resume_job(job_id: str, user_id: str = Depends(require_user)) -> dict:
 # ── Chat ─────────────────────────────────────────────────────────────────────
 
 
-@app.post("/api/chat/messages", response_model=ChatMessageResponse)
+@app.post("/agents/chat/messages", response_model=ChatMessageResponse)
 async def send_chat_message(
     payload: ChatMessageRequest,
     user_id: str = Depends(require_user),
@@ -174,7 +174,7 @@ async def send_chat_message(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/chat/conversations", response_model=SavedConversationListResponse)
+@app.get("/agents/chat/conversations", response_model=SavedConversationListResponse)
 async def list_conversations(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -186,7 +186,7 @@ async def list_conversations(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/chat/conversations", response_model=SavedConversationResponse, status_code=201)
+@app.post("/agents/chat/conversations", response_model=SavedConversationResponse, status_code=201)
 async def create_conversation(
     payload: ConversationCreateRequest,
     user_id: str = Depends(require_user),
@@ -195,7 +195,7 @@ async def create_conversation(
     return SavedConversationResponse(conversation=conversation)
 
 
-@app.get("/api/chat/conversations/{conversation_id}", response_model=ConversationHistory)
+@app.get("/agents/chat/conversations/{conversation_id}", response_model=ConversationHistory)
 async def get_conversation(
     conversation_id: str,
     user_id: str = Depends(require_user),
@@ -206,7 +206,7 @@ async def get_conversation(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.patch("/api/chat/conversations/{conversation_id}", response_model=SavedConversationResponse)
+@app.patch("/agents/chat/conversations/{conversation_id}", response_model=SavedConversationResponse)
 async def rename_conversation(
     conversation_id: str,
     payload: ConversationRenameRequest,
@@ -219,7 +219,7 @@ async def rename_conversation(
     return SavedConversationResponse(conversation=conversation)
 
 
-@app.delete("/api/chat/conversations/{conversation_id}", response_model=SavedConversationResponse)
+@app.delete("/agents/chat/conversations/{conversation_id}", response_model=SavedConversationResponse)
 async def archive_conversation(
     conversation_id: str,
     user_id: str = Depends(require_user),

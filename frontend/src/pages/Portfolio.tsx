@@ -517,34 +517,51 @@ export function Portfolio() {
           <div
             style={{
               display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              alignItems: "flex-start",
+              justifyContent: "flex-start",
+              gap: 12,
               marginBottom: 8,
             }}
           >
+            <button
+              type="button"
+              onClick={() => refetch()}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 12px",
+                borderRadius: 16,
+                border: "2px solid rgba(17,24,39,0.16)",
+                background: "rgba(255,255,255,0.92)",
+                color: "#111827",
+                cursor: "pointer",
+                boxShadow: "0 4px 0 rgba(17,24,39,0.08)",
+                flexShrink: 0,
+              }}
+            >
+              <RefreshCw size={16} className={isFetching ? "animate-spin" : ""} />
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 800,
+                  lineHeight: 1,
+                  color: "#111827",
+                }}
+              >
+                Refresh
+              </span>
+            </button>
             <p
               style={{
                 fontSize: "var(--text-sm)",
                 color: "var(--text-secondary)",
                 fontWeight: "var(--weight-regular)",
+                margin: "10px 0 0",
               }}
             >
               {onboardStatus?.displayName ? `Hey ${onboardStatus.displayName} —` : "Hey —"}
             </p>
-            <button
-                type="button"
-                onClick={() => refetch()}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--text-tertiary)",
-                  cursor: "pointer",
-                  padding: 4,
-                  display: "inline-flex",
-                }}
-              >
-                <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} />
-              </button>
           </div>
 
           <h2

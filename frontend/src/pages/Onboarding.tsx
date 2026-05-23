@@ -74,6 +74,14 @@ interface GuidanceDraft {
   notes: string;
 }
 
+function createDefaultAccount(): Account {
+  return {
+    id: generateId(),
+    name: "Main",
+    positions: [],
+  };
+}
+
 // Step numbering for new (unauthenticated) users: 1=account, 2=portfolio, 3=confirm, 4=guidance
 // Step numbering for authenticated users: 1=password-change, 2=portfolio, 3=confirm, 4=guidance
 interface OnboardingState {
@@ -89,6 +97,12 @@ interface OnboardingState {
   positionGuidance: Record<string, GuidanceDraft>;
 }
 
+type StateUpdater<T> = T | ((prev: T) => T);
+type UpdateOnboardingState = <K extends keyof OnboardingState>(
+  key: K,
+  value: StateUpdater<OnboardingState[K]>
+) => void;
+
 const initialState: OnboardingState = {
   step: 1,
   adminKey: "",
@@ -97,7 +111,7 @@ const initialState: OnboardingState = {
   confirmPassword: "",
   currentPassword: "",
   displayName: "",
-  accounts: [],
+  accounts: [createDefaultAccount()],
   guidanceTickers: [],
   positionGuidance: {},
 };
@@ -154,7 +168,7 @@ function FieldError({ message }: { message: string }) {
 }
 
 // ---- Step 1: New User Account Setup ----
-function Step1({ state, update, onNext }: { state: OnboardingState; update: <K extends keyof OnboardingState>(k: K, v: OnboardingState[K]) => void; onNext: () => void }) {
+function Step1({ state, update, onNext }: { state: OnboardingState; update: UpdateOnboardingState; onNext: () => void }) {
   const language = usePreferencesStore((s) => s.language);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -213,7 +227,7 @@ function Step1({ state, update, onNext }: { state: OnboardingState; update: <K e
 }
 
 // ---- Step 1: Authenticated User — Change Password ----
-function AuthStep1({ state, update, onNext }: { state: OnboardingState; update: <K extends keyof OnboardingState>(k: K, v: OnboardingState[K]) => void; onNext: () => void }) {
+function AuthStep1({ state, update, onNext }: { state: OnboardingState; update: UpdateOnboardingState; onNext: () => void }) {
   const language = usePreferencesStore((s) => s.language);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [apiError, setApiError] = useState("");
@@ -292,7 +306,7 @@ function PositionCard({
 }: {
   pos: PositionEntry; idx: number; accountName: string;
   accounts: Account[];
-  updateAccount: (id: string, updated: Account) => void;
+  updateAccount: (id: string, updater: (account: Account) => Account) => void;
   errors?: Record<string, string>;
 }) {
   const language = usePreferencesStore((s) => s.language);
@@ -310,18 +324,23 @@ function PositionCard({
   );
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceError, setPriceError] = useState(false);
-
-  const acc = accounts.find((a) => a.id === accountName)!;
-
   const updatePos = (patch: Partial<PositionEntry>) => {
-    const currency = (patch.exchange
-      ? EXCHANGES.find((e) => e.value === patch.exchange)!.currency
-      : pos.currency) as Currency;
-    updateAccount(accountName, { ...acc, positions: acc.positions.map((p, i) => i === idx ? { ...p, ...patch, currency } : p) });
+    updateAccount(accountName, (account) => ({
+      ...account,
+      positions: account.positions.map((position, positionIdx) => {
+        if (positionIdx !== idx) return position;
+        const nextExchange = patch.exchange ?? position.exchange;
+        const currency = EXCHANGES.find((entry) => entry.value === nextExchange)?.currency ?? position.currency;
+        return { ...position, ...patch, currency: currency as Currency };
+      }),
+    }));
   };
 
   const removePos = () => {
-    updateAccount(accountName, { ...acc, positions: acc.positions.filter((_, i) => i !== idx) });
+    updateAccount(accountName, (account) => ({
+      ...account,
+      positions: account.positions.filter((_, positionIdx) => positionIdx !== idx),
+    }));
   };
 
   const applyMarketPrice = async (val: TickerSelection) => {
@@ -418,7 +437,7 @@ function AccountSection({
   account, accounts, updateAccount, deleteAccount, showDelete, errors = {},
 }: {
   account: Account; accounts: Account[];
-  updateAccount: (id: string, updated: Account) => void;
+  updateAccount: (id: string, updater: (account: Account) => Account) => void;
   deleteAccount: (id: string) => void;
   showDelete: boolean;
   errors?: Record<string, string>;
@@ -429,7 +448,7 @@ function AccountSection({
 
   const commitRename = () => {
     const trimmed = nameVal.trim() || t("onboardDefaultAccount", language);
-    updateAccount(account.id, { ...account, name: trimmed });
+    updateAccount(account.id, (currentAccount) => ({ ...currentAccount, name: trimmed }));
     setEditingName(false);
   };
 
@@ -438,7 +457,10 @@ function AccountSection({
       id: generateId(), ticker: "", exchange: "NYSE",
       shares: "", avgPrice: "", currency: "USD", account: account.name,
     };
-    updateAccount(account.id, { ...account, positions: [...account.positions, newPos] });
+    updateAccount(account.id, (currentAccount) => ({
+      ...currentAccount,
+      positions: [...currentAccount.positions, newPos],
+    }));
   };
 
   const posCount = account.positions.length;
@@ -494,19 +516,21 @@ function AccountSection({
 function StepPortfolio({
   state, update, onBack, onNext,
 }: {
-  state: OnboardingState; update: <K extends keyof OnboardingState>(k: K, v: OnboardingState[K]) => void;
+  state: OnboardingState; update: UpdateOnboardingState;
   onBack?: () => void; onNext: () => void;
 }) {
   const language = usePreferencesStore((s) => s.language);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const updateAccount = (id: string, updated: Account) => {
-    update("accounts", state.accounts.map((a) => a.id === id ? updated : a));
+  const updateAccount = (id: string, updater: (account: Account) => Account) => {
+    update("accounts", (accounts) => accounts.map((account) => (
+      account.id === id ? updater(account) : account
+    )));
   };
 
   const deleteAccount = (id: string) => {
     if (state.accounts.length <= 1) return;
-    update("accounts", state.accounts.filter((a) => a.id !== id));
+    update("accounts", (accounts) => accounts.filter((account) => account.id !== id));
   };
 
   const addAccount = () => {
@@ -515,7 +539,7 @@ function StepPortfolio({
     let n = 1;
     while (existingNames.includes(newName)) { newName = `${t("onboardDefaultAccount", language)} ${n++}`; }
     const acc: Account = { id: generateId(), name: newName, positions: [] };
-    update("accounts", [...state.accounts, acc]);
+    update("accounts", (accounts) => [...accounts, acc]);
   };
 
   const handleNext = () => {
@@ -765,7 +789,11 @@ function StepGuidance({
         <button onClick={onSkip} disabled={submitting} className="flex-1 py-3 rounded-lg border border-[var(--color-border)] text-sm font-bold text-[var(--color-fg-muted)] disabled:opacity-50">
           {t("onboardSkip", language)}
         </button>
-        <button onClick={onLaunch} disabled={submitting} className="flex-1 py-3 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-fg)] text-sm font-bold disabled:opacity-50">
+        <button
+          onClick={onLaunch}
+          disabled={submitting}
+          className="flex-1 py-3 rounded-xl border border-black/10 bg-[var(--color-primary)] text-[var(--color-primary-fg)] text-sm font-bold shadow-[0_4px_0_rgba(17,24,39,0.12)] transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:translate-y-0"
+        >
           {submitting ? t("onboardLaunching", language) : t("onboardLaunchBtn", language)}
         </button>
       </div>
@@ -788,7 +816,7 @@ export function Onboarding() {
   const [state, setState] = useState<OnboardingState>({
     ...initialState,
     step: 2,
-    accounts: [],
+    accounts: [createDefaultAccount()],
   });
 
   const [submittingPortfolio, setSubmittingPortfolio] = useState(false);
@@ -831,8 +859,13 @@ export function Onboarding() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const update = <K extends keyof OnboardingState>(k: K, v: OnboardingState[K]) => {
-    setState((s) => ({ ...s, [k]: v }));
+  const update: UpdateOnboardingState = (key, value) => {
+    setState((current) => ({
+      ...current,
+      [key]: typeof value === "function"
+        ? (value as (prev: OnboardingState[typeof key]) => OnboardingState[typeof key])(current[key])
+        : value,
+    }));
   };
 
   const buildGuidancePayload = () =>
@@ -959,7 +992,7 @@ export function Onboarding() {
 
   const ensureOneAccount = (s: OnboardingState): OnboardingState => {
     if (s.accounts.length === 0) {
-      return { ...s, accounts: [{ id: generateId(), name: "Main", positions: [] }] };
+      return { ...s, accounts: [createDefaultAccount()] };
     }
     return s;
   };

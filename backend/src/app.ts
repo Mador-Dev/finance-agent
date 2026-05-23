@@ -7,7 +7,7 @@ import express, {
 import helmet from "helmet";
 import cors from "cors";
 import path from "path";
-import { createProxyMiddleware } from "http-proxy-middleware";
+import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { clerkMiddleware } from "@clerk/express";
 import { logger } from "./services/logger.js";
 import { ZodError } from "zod";
@@ -83,11 +83,25 @@ export function createApp(): Express {
     createProxyMiddleware({
       target: agentsTarget,
       changeOrigin: true,
-      pathRewrite: { "^/api/agents": "/api" },
+      pathRewrite: (path) => (
+        path === "/agents" || path.startsWith("/agents/")
+          ? path
+          : `/agents${path}`
+      ),
+      proxyTimeout: 120_000,
+      timeout: 120_000,
       on: {
-        proxyReq(proxyReq, _req, res) {
+        proxyReq(proxyReq, req, res) {
+          const proxiedPath =
+            req.path === "/agents" || req.path.startsWith("/agents/")
+              ? req.path
+              : `/agents${req.path}`;
           const userId = res.locals["userId"] as string | undefined;
           if (userId) proxyReq.setHeader("x-user-id", userId);
+          fixRequestBody(proxyReq, req);
+          logger.info(
+            `Agents proxy ${req.method} ${req.originalUrl} -> ${agentsTarget}${proxiedPath} user=${userId ?? "unknown"}`
+          );
         },
       },
     })

@@ -54,7 +54,6 @@ def _normalize_lifecycle(raw: Any) -> dict[str, Any]:
         },
     }
 
-
 # ── User / bootstrap ──────────────────────────────────────────────────────────
 
 
@@ -330,7 +329,46 @@ def load_bootstrap_job(user_id: str, job_id: str) -> BootstrapJobState:
     row = fetch_one("SELECT result FROM jobs WHERE id = %s AND user_id = %s", (job_id, user_id))
     if not row or not row.get("result"):
         raise FileNotFoundError(f"Bootstrap job not found: {job_id}")
-    return BootstrapJobState.model_validate(row["result"])
+    payload = row["result"]
+    if not isinstance(payload, dict):
+        raise FileNotFoundError(f"Bootstrap job not found: {job_id}")
+
+    raw_tickers = payload.get("tickers")
+    normalized_tickers: list[dict[str, Any]] = []
+    if isinstance(raw_tickers, list):
+        for item in raw_tickers:
+            if isinstance(item, dict):
+                ticker_value = item.get("ticker")
+                if isinstance(ticker_value, str) and ticker_value.strip():
+                    normalized_tickers.append({**item, "ticker": ticker_value.strip().upper()})
+            elif isinstance(item, str):
+                ticker = item.strip().upper()
+                if ticker:
+                    normalized_tickers.append({"ticker": ticker, "status": "pending"})
+    payload["tickers"] = normalized_tickers
+
+    for key in ("completedTickers", "failedTickers"):
+        raw_values = payload.get(key)
+        normalized_values: list[str] = []
+        if isinstance(raw_values, list):
+          for item in raw_values:
+              if isinstance(item, str):
+                  ticker = item.strip().upper()
+                  if ticker:
+                      normalized_values.append(ticker)
+              elif isinstance(item, dict):
+                  ticker_value = item.get("ticker")
+                  if isinstance(ticker_value, str):
+                      ticker = ticker_value.strip().upper()
+                      if ticker:
+                          normalized_values.append(ticker)
+        payload[key] = normalized_values
+
+    current_ticker = payload.get("currentTicker")
+    if isinstance(current_ticker, str):
+        payload["currentTicker"] = current_ticker.strip().upper() or None
+
+    return BootstrapJobState.model_validate(payload)
 
 
 def find_active_bootstrap_job(user_id: str) -> BootstrapJobState | None:
@@ -349,7 +387,46 @@ def find_active_bootstrap_job(user_id: str) -> BootstrapJobState | None:
     )
     if not row or not row.get("result"):
         return None
-    return BootstrapJobState.model_validate(row["result"])
+    payload = row["result"]
+    if not isinstance(payload, dict):
+        return None
+
+    raw_tickers = payload.get("tickers")
+    normalized_tickers: list[dict[str, Any]] = []
+    if isinstance(raw_tickers, list):
+        for item in raw_tickers:
+            if isinstance(item, dict):
+                ticker_value = item.get("ticker")
+                if isinstance(ticker_value, str) and ticker_value.strip():
+                    normalized_tickers.append({**item, "ticker": ticker_value.strip().upper()})
+            elif isinstance(item, str):
+                ticker = item.strip().upper()
+                if ticker:
+                    normalized_tickers.append({"ticker": ticker, "status": "pending"})
+    payload["tickers"] = normalized_tickers
+
+    for key in ("completedTickers", "failedTickers"):
+        raw_values = payload.get(key)
+        normalized_values: list[str] = []
+        if isinstance(raw_values, list):
+            for item in raw_values:
+                if isinstance(item, str):
+                    ticker = item.strip().upper()
+                    if ticker:
+                        normalized_values.append(ticker)
+                elif isinstance(item, dict):
+                    ticker_value = item.get("ticker")
+                    if isinstance(ticker_value, str):
+                        ticker = ticker_value.strip().upper()
+                        if ticker:
+                            normalized_values.append(ticker)
+        payload[key] = normalized_values
+
+    current_ticker = payload.get("currentTicker")
+    if isinstance(current_ticker, str):
+        payload["currentTicker"] = current_ticker.strip().upper() or None
+
+    return BootstrapJobState.model_validate(payload)
 
 
 # ── Analysis jobs ─────────────────────────────────────────────────────────────
@@ -418,6 +495,20 @@ def _row_to_job(row: dict) -> JobRecord:
         extra = {}
     progress_raw = extra.get("progress")
     progress = JobProgress.model_validate(progress_raw) if progress_raw else None
+    tickers: list[str] = []
+    raw_tickers = extra.get("tickers")
+    if isinstance(raw_tickers, list):
+        for item in raw_tickers:
+            if isinstance(item, str):
+                ticker = item.strip().upper()
+                if ticker:
+                    tickers.append(ticker)
+            elif isinstance(item, dict):
+                ticker_value = item.get("ticker")
+                if isinstance(ticker_value, str):
+                    ticker = ticker_value.strip().upper()
+                    if ticker:
+                        tickers.append(ticker)
     return JobRecord(
         id=row["id"],
         action=row["action"],
@@ -431,7 +522,7 @@ def _row_to_job(row: dict) -> JobRecord:
         progress=progress,
         source=row.get("source"),
         user_id=row["user_id"],
-        tickers=extra.get("tickers") or [],
+        tickers=tickers,
     )
 
 

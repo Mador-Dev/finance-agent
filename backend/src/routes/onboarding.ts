@@ -24,7 +24,6 @@ import {
   ensureUserProvisioned,
   workspaceExists,
   saveUserPortfolio,
-  startUserBootstrap,
 } from "../services/workspaceService.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { ensureUserProvisionedMiddleware } from "../middleware/ensureUserProvisioned.js";
@@ -270,14 +269,10 @@ router.post(
       },
     });
 
-    // Prepare the workspace (strategy stubs, ticker dirs, state → BOOTSTRAPPING).
-    // The actual job is triggered by the client on the agents service after this returns.
-    await startUserBootstrap(ws.userId);
-
     res.status(200).json({
-      state: "BOOTSTRAPPING",
+      state: currentState.state,
       guidanceStepPending: false,
-      message: "Account launched. Start the bootstrap job on the agents service to begin analysis.",
+      message: "Guidance saved. Launch bootstrap on the agents service to begin analysis.",
     });
   })
 );
