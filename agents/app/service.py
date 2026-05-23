@@ -103,6 +103,24 @@ class BootstrapService:
                     strategy,
                     guidance_applied=ticker in payload.guidance,
                 )
+                store.upsert_report_artifact(
+                    payload.userId,
+                    ticker,
+                    "strategy",
+                    {
+                        "ticker": ticker,
+                        "verdict": strategy.verdict,
+                        "confidence": strategy.confidence,
+                        "reasoning": strategy.reasoning,
+                        "timeframe": strategy.timeframe,
+                        "entryConditions": [],
+                        "exitConditions": strategy.invalidation_conditions[:5],
+                        "catalysts": [c.model_dump() for c in strategy.catalysts],
+                        "bullCase": strategy.bull_case,
+                        "bearCase": strategy.bear_case,
+                        "updatedAt": utc_now(),
+                    },
+                )
                 for name in ("fundamentals", "sentiment", "risk", "debate", "bull_case", "bear_case"):
                     artifact = strategy.analyst_reports.get(name)
                     if artifact:

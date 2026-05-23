@@ -174,39 +174,56 @@ def load_guidance(user_id: str) -> dict[str, dict]:
 
 
 def upsert_strategy(user_id: str, ticker: str, draft: TickerStrategyDraft, *, guidance_applied: bool) -> None:
+    now = utc_now()
+    catalysts = [c.model_dump() for c in draft.catalysts]
+    entry_conditions: list[str] = []
+    exit_conditions = draft.invalidation_conditions[:5]
+    avoid_conditions = draft.key_risks[:5]
+    metadata = {
+        "source": "bootstrap",
+        "status": "provisional",
+        "generatedAt": now,
+        "userGuidanceApplied": guidance_applied,
+    }
     execute(
         """
         INSERT INTO strategies (
-          user_id, ticker, verdict, confidence, reasoning, timeframe,
-          position_size_ils, position_weight_pct,
-          bull_case, bear_case, catalysts, exit_conditions, metadata
-        ) VALUES (%s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+          user_id, ticker, asset_scope, verdict, confidence, reasoning, timeframe,
+          position_size_ils, position_weight_pct, entry_conditions, exit_conditions,
+          catalysts, bull_case, bear_case, last_deep_dive_at, metadata,
+          action_catalysts, avoid_conditions, asset_class
+        ) VALUES (
+          %s, %s, 'portfolio', %s, %s, %s, %s, 0, 0, %s::jsonb, %s::jsonb,
+          %s::jsonb, %s, %s, %s, %s::jsonb, '[]'::jsonb, %s::jsonb, 'equity'
+        )
         ON CONFLICT (user_id, ticker) DO UPDATE SET
+          asset_scope = EXCLUDED.asset_scope,
           verdict = EXCLUDED.verdict,
           confidence = EXCLUDED.confidence,
           reasoning = EXCLUDED.reasoning,
           timeframe = EXCLUDED.timeframe,
+          entry_conditions = EXCLUDED.entry_conditions,
           bull_case = EXCLUDED.bull_case,
           bear_case = EXCLUDED.bear_case,
           catalysts = EXCLUDED.catalysts,
           exit_conditions = EXCLUDED.exit_conditions,
+          last_deep_dive_at = EXCLUDED.last_deep_dive_at,
           metadata = EXCLUDED.metadata,
+          action_catalysts = EXCLUDED.action_catalysts,
+          avoid_conditions = EXCLUDED.avoid_conditions,
           updated_at = NOW()
         """,
         (
             user_id, ticker.upper(),
             draft.verdict, draft.confidence, draft.reasoning, draft.timeframe,
-            draft.bull_case, draft.bear_case,
-            json.dumps([c.model_dump() for c in draft.catalysts]),
-            json.dumps(draft.invalidation_conditions[:5]),
-            json.dumps(
-                {
-                    "source": "bootstrap",
-                    "status": "provisional",
-                    "generatedAt": utc_now(),
-                    "userGuidanceApplied": guidance_applied,
-                }
-            ),
+            json.dumps(entry_conditions),
+            json.dumps(exit_conditions),
+            json.dumps(catalysts),
+            draft.bull_case,
+            draft.bear_case,
+            now,
+            json.dumps(metadata),
+            json.dumps(avoid_conditions),
         ),
     )
 

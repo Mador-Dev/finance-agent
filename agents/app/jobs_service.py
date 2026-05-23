@@ -115,6 +115,24 @@ class JobsService:
                     recent_reports=[r for r in reports if r.get("ticker") == ticker],
                 )
                 store.upsert_strategy(user_id, ticker, strategy)
+                store.upsert_report_artifact(
+                    user_id,
+                    ticker,
+                    "strategy",
+                    {
+                        "ticker": ticker,
+                        "verdict": strategy.verdict,
+                        "confidence": strategy.confidence,
+                        "reasoning": strategy.reasoning,
+                        "timeframe": strategy.timeframe,
+                        "entryConditions": [],
+                        "exitConditions": strategy.invalidation_conditions[:5],
+                        "catalysts": [c.model_dump() for c in strategy.catalysts],
+                        "bullCase": strategy.bull_case,
+                        "bearCase": strategy.bear_case,
+                        "updatedAt": utc_now(),
+                    },
+                )
                 strategies.append(strategy)
                 completed.append(ticker)
             except asyncio.CancelledError:
