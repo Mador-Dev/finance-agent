@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiClient } from "../api/client";
-import { cancelJob, resumeJob } from "../api/jobs";
+import { cancelJob, fetchJobs, resumeJob } from "../api/jobs";
 import { Spinner } from "../components/ui/Spinner";
 import { EmptyState } from "../components/ui/EmptyState";
-import type { FeedPageResponse, FeedItem, FeedItemEntry, Job, JobsResponse } from "../types/api";
+import type { FeedPageResponse, FeedItem, FeedItemEntry, Job } from "../types/api";
 import { usePreferencesStore } from "../store/preferencesStore";
 import { t, tConfidence } from "../store/i18n";
 import { useToastStore } from "../store/toastStore";
@@ -1531,7 +1531,7 @@ export function Reports() {
 
   const { data: jobsData } = useQuery({
     queryKey: ["jobs-reports"],
-    queryFn: () => apiClient.get<JobsResponse>("/jobs").then((r) => r.data),
+    queryFn: fetchJobs,
     staleTime: 5_000,
     refetchInterval: 8_000,
   });

@@ -3,7 +3,6 @@ import type { AuthenticatedRequest } from "../middleware/auth.js";
 import type { UserWorkspace } from "../middleware/userIsolation.js";
 import { runConditionCheck, markCatalystTriggered, markDeepDiveComplete } from "../services/conditionEngine.js";
 import type { EscalationReason } from "../services/conditionEngine.js";
-import { triggerUserJob } from "../services/jobTriggerService.js";
 
 const router = Router();
 const TICKER_REGEX = /^[A-Z0-9.]{1,12}$/;
@@ -76,18 +75,7 @@ router.post(
     pending.add(ticker);
     await writeState(ws.userId, { pendingDeepDives: Array.from(pending) });
 
-    const triggered = await triggerUserJob({
-      workspace: ws,
-      action: "deep_dive",
-      ticker,
-      source: "dashboard_action",
-    });
-    if (triggered.statusCode >= 400) {
-      res.status(triggered.statusCode).json(triggered.body);
-      return;
-    }
-
-    res.json({ jobId: triggered.body["jobId"], ticker, queued: true, stepQueue: true });
+    res.json({ ticker, queued: true });
   })
 );
 

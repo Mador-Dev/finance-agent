@@ -5,6 +5,7 @@ from typing import Any
 
 from agents.analysis_agent import invoke_analysis_agent
 from agents.app.config import get_settings
+from agents.app.points import POINT_COSTS, PointsBudgetExceededError, require_points
 from agents.app import store
 from agents.app.schemas import (
     JobProgress,
@@ -36,6 +37,14 @@ class JobsService:
     async def trigger(self, user_id: str, payload: TriggerJobRequest) -> JobRecord:
         self._loop = asyncio.get_running_loop()
         tickers = self._resolve_tickers(user_id, payload.action, payload.ticker)
+        charge = self._charge_for_action(payload.action, len(tickers))
+        require_points(
+            user_id,
+            charge,
+            source="agents",
+            action=payload.action,
+            note=f"Triggered {payload.action} for {len(tickers)} ticker(s)",
+        )
         job = store.create_job(user_id, payload.action, payload.ticker, tickers)
         self._tasks[job.id] = asyncio.create_task(self._run_job(job))
         return job
@@ -77,6 +86,12 @@ class JobsService:
         job = future.result(timeout=2)
         return {"jobId": job.id, "status": job.status, "action": job.action, "ticker": job.ticker}
 
+    @staticmethod
+    def _charge_for_action(action: str, ticker_count: int) -> float:
+        if action in {"full_report", "daily_brief"}:
+            return POINT_COSTS.get(action, 0.0) * max(1, ticker_count)
+        return POINT_COSTS.get(action, 0.0)
+
     async def _run_job(self, job: JobRecord) -> None:
         user_id = job.user_id
         if not user_id:
@@ -114,25 +129,8 @@ class JobsService:
                     current_strategy=store.load_strategy(user_id, ticker),
                     recent_reports=[r for r in reports if r.get("ticker") == ticker],
                 )
-                store.upsert_strategy(user_id, ticker, strategy)
-                store.upsert_report_artifact(
-                    user_id,
-                    ticker,
-                    "strategy",
-                    {
-                        "ticker": ticker,
-                        "verdict": strategy.verdict,
-                        "confidence": strategy.confidence,
-                        "reasoning": strategy.reasoning,
-                        "timeframe": strategy.timeframe,
-                        "entryConditions": [],
-                        "exitConditions": strategy.invalidation_conditions[:5],
-                        "catalysts": [c.model_dump() for c in strategy.catalysts],
-                        "bullCase": strategy.bull_case,
-                        "bearCase": strategy.bear_case,
-                        "updatedAt": utc_now(),
-                    },
-                )
+                store.upsert_strategy(user_id, ticker, strategy, guidance_applied=False)
+                store.write_analysis_artifacts(user_id, job.action, ticker, strategy)
                 strategies.append(strategy)
                 completed.append(ticker)
             except asyncio.CancelledError:
@@ -156,6 +154,9 @@ class JobsService:
             "completedTickers": completed,
             "failedTickers": list(failures.keys()),
         }
+        batch = store.build_job_batch(job, strategies, completed)
+        if batch:
+            job.result["batch"] = batch
         self._update_progress(job, completed, failures, None, None)
         store.write_job(job)
 

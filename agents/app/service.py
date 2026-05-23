@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from agents.app.config import get_settings
+from agents.app.points import POINT_COSTS, require_points
 from agents.app import store
 from agents.app.schemas import (
     BootstrapJobResult,
@@ -24,6 +25,18 @@ class BootstrapService:
         existing = store.find_active_bootstrap_job(payload.userId)
         if existing is not None:
             return existing
+        ticker_count = len({
+            position.ticker
+            for positions in payload.accounts.values()
+            for position in positions
+        })
+        require_points(
+            payload.userId,
+            POINT_COSTS["bootstrap_per_ticker"] * max(1, ticker_count),
+            source="agents",
+            action="bootstrap",
+            note=f"Bootstrap started for {ticker_count} ticker(s)",
+        )
         guidance_data = {ticker: g.model_dump() for ticker, g in payload.guidance.items()}
         store.upsert_user(payload.userId, payload.displayName or payload.userId, payload.schedule.model_dump(), guidance_data)
         store.upsert_portfolio(

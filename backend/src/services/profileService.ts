@@ -163,7 +163,7 @@ export async function getUserPlan(userId: string): Promise<UserPlan> {
   if (isApplicationDatabaseConfigured()) {
     const { getUserPlan: readPlan } = await import("./userStore.js");
     const plan = await readPlan(userId);
-    return plan === "free" || plan === "pro" || plan === "enterprise" ? plan : DEFAULT_USER_PLAN;
+    return plan === "low" || plan === "pro" ? plan : DEFAULT_USER_PLAN;
   }
   try {
     const raw = await fs.readFile(userConfigPath(userId), "utf-8");

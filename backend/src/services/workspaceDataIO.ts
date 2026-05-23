@@ -1,19 +1,17 @@
 import path from "path";
 import { isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
 import { readPersonaMd, writePersonaMd } from "./personaStore.js";
-import { readOrchestrationState, writeOrchestrationState } from "./orchestrationStateStore.js";
 import { readReportArtifact, writeReportArtifact } from "./reportArtifactStore.js";
 import { readPortfolio, writePortfolio } from "./portfolioStore.js";
 import { readStrategy, writeStrategy } from "./strategyStore.js";
 import { renderStrategyJson } from "./strategyExportService.js";
 import { strategyToWriteInput } from "./strategyExportService.js";
-import { StrategySchema, type Strategy } from "../schemas/strategy.js";
+import { StrategySchema } from "../schemas/strategy.js";
 
 const GLOBAL_TICKER = "_global";
 
 export type ParsedWorkspacePath =
   | { kind: "report"; ticker: string; key: string }
-  | { kind: "orchestration"; key: string }
   | { kind: "strategy"; ticker: string }
   | { kind: "persona" }
   | { kind: "portfolio" };
@@ -39,24 +37,6 @@ export function parseWorkspaceDataPath(
     return { kind: "report", ticker: reportMatch[1]!.toUpperCase(), key: reportMatch[2]!.replace(/\.json$/, "") };
   }
 
-  const orchestrationMatch = relative.match(/^data\/reports\/([^/]+\.json)$/);
-  if (orchestrationMatch) {
-    return {
-      kind: "orchestration",
-      key: orchestrationMatch[1]!.replace(/\.json$/, ""),
-    };
-  }
-
-  const indexMatch = relative.match(/^data\/reports\/index\/(.+\.json)$/);
-  if (indexMatch) {
-    return { kind: "orchestration", key: `index_${indexMatch[1]!.replace(/\.json$/, "")}` };
-  }
-
-  const feedMatch = relative.match(/^feed\/(.+\.json)$/);
-  if (feedMatch) {
-    return { kind: "orchestration", key: `feed_${feedMatch[1]!.replace(/\.json$/, "")}` };
-  }
-
   const strategyMatch = relative.match(/^data\/tickers\/([^/]+)\/strategy\.json$/);
   if (strategyMatch) {
     return { kind: "strategy", ticker: strategyMatch[1]!.toUpperCase() };
@@ -76,8 +56,6 @@ export async function readWorkspaceJson(
   switch (parsed.kind) {
     case "report":
       return readReportArtifact(userId, parsed.ticker, parsed.key);
-    case "orchestration":
-      return readOrchestrationState(userId, parsed.key);
     case "portfolio":
       return readPortfolio(userId);
     case "strategy": {
@@ -101,9 +79,6 @@ export async function writeWorkspaceJson(
   switch (parsed.kind) {
     case "report":
       await writeReportArtifact(userId, parsed.ticker, parsed.key, value);
-      return true;
-    case "orchestration":
-      await writeOrchestrationState(userId, parsed.key, value);
       return true;
     case "portfolio":
       await writePortfolio(userId, value as Parameters<typeof writePortfolio>[1]);
@@ -142,9 +117,6 @@ export async function writeWorkspaceText(
   return true;
 }
 
-export function orchestrationKeyForReportState(basename: string): string {
-  return basename.replace(/\.json$/, "");
-}
 
 export async function writeGlobalReportArtifact(
   userId: string,

@@ -1,7 +1,6 @@
 import { NotificationPreferencesSchema, type NotificationPreferences } from "../schemas/notifications.js";
 import { logger } from "./logger.js";
 import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
-import { getStoredWhatsAppConnection, getUserChannelConnectivity } from "./channelService.js";
 import {
   composeNotification,
   renderTelegramNotification,
@@ -18,7 +17,6 @@ import {
 } from "./notificationStore.js";
 import { sendTelegramMessage } from "./telegramDelivery.js";
 
-const WHATSAPP_GRAPH_VERSION = process.env["WHATSAPP_GRAPH_VERSION"] ?? "v17.0";
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = NotificationPreferencesSchema.parse({
   primaryChannel: "telegram",
@@ -34,10 +32,24 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = NotificationPr
   },
 });
 
+async function isTelegramConnected(userId: string): Promise<boolean> {
+  if (!isApplicationDatabaseConfigured()) return false;
+  try {
+    const ds = await getApplicationDataSource();
+    const rows = await ds.query(
+      `SELECT 1 FROM users WHERE user_id = $1 AND telegram_chat_id IS NOT NULL AND telegram_bot_token IS NOT NULL LIMIT 1`,
+      [userId]
+    ) as unknown[];
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function getNotificationPreferences(
   userId: string
 ): Promise<NotificationPreferences> {
-  const connectivity = await getUserChannelConnectivity(userId);
+  const telegramConnected = await isTelegramConnected(userId);
   let base = DEFAULT_NOTIFICATION_PREFERENCES;
   if (isApplicationDatabaseConfigured()) {
     try {
@@ -55,14 +67,11 @@ export async function getNotificationPreferences(
   }
   return {
     ...base,
-    primaryChannel:
-      base.primaryChannel === "telegram" && !connectivity.telegram.connected ? "web"
-      : base.primaryChannel === "whatsapp" && !connectivity.whatsapp.connected ? "web"
-      : base.primaryChannel,
+    primaryChannel: base.primaryChannel === "telegram" && !telegramConnected ? "web" : base.primaryChannel,
     enabledChannels: {
       ...base.enabledChannels,
-      telegram: base.enabledChannels.telegram && connectivity.telegram.connected,
-      whatsapp: base.enabledChannels.whatsapp && connectivity.whatsapp.connected,
+      telegram: base.enabledChannels.telegram && telegramConnected,
+      whatsapp: false,
     },
   };
 }
@@ -72,18 +81,14 @@ export async function setNotificationPreferences(
   preferences: NotificationPreferences
 ): Promise<NotificationPreferences> {
   const validated = NotificationPreferencesSchema.parse(preferences);
-  const connectivity = await getUserChannelConnectivity(userId);
-  const nextPrimaryChannel =
-    validated.primaryChannel === "telegram" && !connectivity.telegram.connected ? "web"
-    : validated.primaryChannel === "whatsapp" && !connectivity.whatsapp.connected ? "web"
-    : validated.primaryChannel;
+  const telegramConnected = await isTelegramConnected(userId);
   const normalized = {
     ...validated,
-    primaryChannel: nextPrimaryChannel,
+    primaryChannel: validated.primaryChannel === "telegram" && !telegramConnected ? "web" : validated.primaryChannel,
     enabledChannels: {
       ...validated.enabledChannels,
-      telegram: validated.enabledChannels.telegram && connectivity.telegram.connected,
-      whatsapp: validated.enabledChannels.whatsapp && connectivity.whatsapp.connected,
+      telegram: validated.enabledChannels.telegram && telegramConnected,
+      whatsapp: false,
     },
   } satisfies NotificationPreferences;
 
@@ -159,24 +164,13 @@ async function getTelegramTarget(userId: string): Promise<{ botToken: string; ch
   if (!isApplicationDatabaseConfigured()) return null;
   try {
     const ds = await getApplicationDataSource();
-    const [bindingRows, secretRows] = await Promise.all([
-      ds.query(
-        `SELECT channel_identifier FROM channel_bindings
-          WHERE user_id = $1 AND channel = 'telegram' AND unbound_at IS NULL
-          LIMIT 1`,
-        [userId]
-      ) as Promise<Array<{ channel_identifier: string }>>,
-      ds.query(
-        `SELECT ciphertext FROM encrypted_secrets
-          WHERE user_id = $1 AND secret_kind = 'telegram_bot_token'
-          LIMIT 1`,
-        [userId]
-      ) as Promise<Array<{ ciphertext: Buffer }>>,
-    ]);
-    const chatId = bindingRows[0]?.channel_identifier;
-    const botToken = secretRows[0]?.ciphertext?.toString("utf-8");
-    if (!chatId || !botToken) return null;
-    return { botToken, chatId };
+    const rows = await ds.query(
+      `SELECT telegram_chat_id, telegram_bot_token FROM users WHERE user_id = $1 LIMIT 1`,
+      [userId]
+    ) as Array<{ telegram_chat_id: string | null; telegram_bot_token: string | null }>;
+    const row = rows[0];
+    if (!row?.telegram_chat_id || !row?.telegram_bot_token) return null;
+    return { botToken: row.telegram_bot_token, chatId: row.telegram_chat_id };
   } catch {
     return null;
   }
@@ -201,69 +195,20 @@ async function deliverTelegram(record: NotificationEnvelope): Promise<{ delivere
   };
 }
 
-async function deliverWhatsApp(record: NotificationEnvelope): Promise<{ delivered: boolean; error: string | null }> {
-  const target = await getStoredWhatsAppConnection(record.userId);
-  if (!target) {
-    return { delivered: false, error: "whatsapp target not configured" };
-  }
-
-  try {
-    const response = await fetch(
-      `https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${target.phoneNumberId}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${target.accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: target.recipientPhone,
-          type: "text",
-          text: {
-            preview_url: false,
-            body: `${record.title}\n${record.body}`.slice(0, 4096),
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      return { delivered: false, error: `whatsapp send failed: ${body.slice(0, 140)}` };
-    }
-
-    return { delivered: true, error: null };
-  } catch (err) {
-    return {
-      delivered: false,
-      error: err instanceof Error ? err.message.slice(0, 140) : "whatsapp send failed",
-    };
-  }
-}
 
 function buildCandidateChannels(
   preferences: NotificationPreferences,
-  connectivity: Awaited<ReturnType<typeof getUserChannelConnectivity>>
+  telegramConnected: boolean
 ): Array<NotificationEnvelope["channel"]> {
-  const connectedChannels: Array<NotificationEnvelope["channel"]> = [];
-
-  if (preferences.enabledChannels.web && connectivity.web.connected) connectedChannels.push("web");
-  if (preferences.enabledChannels.telegram && connectivity.telegram.connected) connectedChannels.push("telegram");
-  if (preferences.enabledChannels.whatsapp && connectivity.whatsapp.connected) connectedChannels.push("whatsapp");
-
-  if (preferences.primaryChannel === "none") return connectedChannels;
-
-  if (connectedChannels.includes(preferences.primaryChannel as NotificationEnvelope["channel"])) {
-    connectedChannels.sort((left, right) => {
-      if (left === preferences.primaryChannel) return -1;
-      if (right === preferences.primaryChannel) return 1;
-      return 0;
-    });
+  const channels: Array<NotificationEnvelope["channel"]> = [];
+  if (preferences.enabledChannels.web) channels.push("web");
+  if (preferences.enabledChannels.telegram && telegramConnected) channels.push("telegram");
+  if (preferences.primaryChannel !== "none") {
+    channels.sort((a, b) =>
+      a === preferences.primaryChannel ? -1 : b === preferences.primaryChannel ? 1 : 0
+    );
   }
-
-  return connectedChannels;
+  return channels;
 }
 
 export async function publishNotification(
@@ -298,8 +243,8 @@ export async function publishNotification(
     }
   }
 
-  const connectivity = await getUserChannelConnectivity(request.userId);
-  const candidateChannels = buildCandidateChannels(preferences, connectivity);
+  const telegramConnected = await isTelegramConnected(request.userId);
+  const candidateChannels = buildCandidateChannels(preferences, telegramConnected);
 
   const createdAt = new Date().toISOString();
   const records: NotificationEnvelope[] = candidateChannels.map((channel) => ({
@@ -336,19 +281,6 @@ export async function publishNotification(
       const result = await deliverTelegram(record);
       const deliveredAtIso = result.delivered ? new Date().toISOString() : null;
       deliveryOutcomes.push(`telegram:${result.delivered ? "delivered" : "failed"}:${result.attemptedChunks}`);
-      await dbUpdateDelivery(record.userId, record.id, {
-        delivered: result.delivered,
-        deliveredAt: deliveredAtIso,
-        error: result.error,
-      });
-      record.delivered = result.delivered;
-      record.deliveredAt = deliveredAtIso;
-      record.error = result.error;
-    }
-    if (record.channel === "whatsapp") {
-      const result = await deliverWhatsApp(record);
-      const deliveredAtIso = result.delivered ? new Date().toISOString() : null;
-      deliveryOutcomes.push(`whatsapp:${result.delivered ? "delivered" : "failed"}`);
       await dbUpdateDelivery(record.userId, record.id, {
         delivered: result.delivered,
         deliveredAt: deliveredAtIso,

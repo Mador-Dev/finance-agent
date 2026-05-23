@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Layers3, Plus, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronUp, Layers3, Plus } from "lucide-react";
 import {
   fetchPortfolio,
   fetchVerdicts,
@@ -168,7 +168,7 @@ export function Portfolio() {
   const [accountManagerOpen, setAccountManagerOpen] = useState(false);
   const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
 
-  const { data: portfolio, isLoading, error, refetch, isFetching } = useQuery({
+  const { data: portfolio, isLoading, error, refetch } = useQuery({
     queryKey: ["portfolio"],
     queryFn: fetchPortfolio,
     refetchInterval: 5 * 60 * 1000,
@@ -510,60 +510,9 @@ export function Portfolio() {
 
   return (
     <>
-      {/* ── Inline greeting / portfolio headline (replaces TopBar on Portfolio) ── */}
+      {/* ── Portfolio headline ── */}
       {!isBootstrapping && (
-        <div style={{ padding: "20px 16px 4px" }}>
-          {/* Top row: greeting + points + refresh */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "flex-start",
-              gap: 12,
-              marginBottom: 8,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => refetch()}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 12px",
-                borderRadius: 16,
-                border: "2px solid rgba(17,24,39,0.16)",
-                background: "rgba(255,255,255,0.92)",
-                color: "#111827",
-                cursor: "pointer",
-                boxShadow: "0 4px 0 rgba(17,24,39,0.08)",
-                flexShrink: 0,
-              }}
-            >
-              <RefreshCw size={16} className={isFetching ? "animate-spin" : ""} />
-              <span
-                style={{
-                  fontSize: 12,
-                  fontWeight: 800,
-                  lineHeight: 1,
-                  color: "#111827",
-                }}
-              >
-                Refresh
-              </span>
-            </button>
-            <p
-              style={{
-                fontSize: "var(--text-sm)",
-                color: "var(--text-secondary)",
-                fontWeight: "var(--weight-regular)",
-                margin: "10px 0 0",
-              }}
-            >
-              {onboardStatus?.displayName ? `Hey ${onboardStatus.displayName} —` : "Hey —"}
-            </p>
-          </div>
-
+        <div style={{ padding: "16px 16px 4px" }}>
           <h2
             style={{
               fontSize: "var(--text-lg)",

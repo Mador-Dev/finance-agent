@@ -4,14 +4,13 @@ import asyncio
 
 from agents.app.config import get_settings
 from agents.app.jobs_service import JobsService
+from agents.app.points import POINT_COSTS, require_points
 from agents.app import store
 from agents.app.schemas import (
     ChatMessageResponse,
     ConversationHistory,
-    ConversationTurn,
     SavedConversation,
     SavedConversationListResponse,
-    utc_now,
 )
 from agents.chat_agent import invoke_chat_agent
 
@@ -39,24 +38,22 @@ class ChatService:
 
     async def send_message(self, user_id: str, text: str, conversation_id: str) -> ChatMessageResponse:
         self.jobs._loop = asyncio.get_running_loop()
-        history = store.load_conversation(user_id, conversation_id)
-        user_turn = ConversationTurn(
-            conversationId=conversation_id,
-            turnIndex=len(history.turns),
-            role="user",
-            content=text,
-            createdAt=utc_now(),
+        require_points(
+            user_id,
+            POINT_COSTS["chat_message"],
+            source="agents",
+            action="chat_message",
+            ref_id=conversation_id,
+            note="Chat message sent from dashboard",
         )
-        store.append_turns(user_id, conversation_id, [user_turn], model=None, cost_usd=0, tool_call_count=0)
+
+        store.append_message(conversation_id, "user", text)
         history = store.load_conversation(user_id, conversation_id)
 
         messages = [
-            {
-                "role": "assistant" if turn.role == "assistant" else "user",
-                "content": str(turn.content),
-            }
-            for turn in history.turns
-            if turn.role in {"user", "assistant"}
+            {"role": entry.role, "content": entry.content}
+            for entry in history.turns
+            if entry.role in {"user", "assistant"}
         ]
 
         reply_text = await invoke_chat_agent(
@@ -68,24 +65,9 @@ class ChatService:
             trigger_job=lambda action, ticker: self.jobs.trigger_from_chat(user_id, action, ticker),
         )
 
-        assistant_turn = ConversationTurn(
-            conversationId=conversation_id,
-            turnIndex=len(history.turns),
-            role="assistant",
-            content=reply_text,
-            model=self.settings.deep_agent_model,
-            createdAt=utc_now(),
-        )
-        updated = store.append_turns(
-            user_id, conversation_id, [assistant_turn],
-            model=self.settings.deep_agent_model, cost_usd=0, tool_call_count=0,
-        )
-        store.set_termination_reason(conversation_id, "model_final")
+        store.append_message(conversation_id, "assistant", reply_text)
 
         return ChatMessageResponse(
             conversationId=conversation_id,
             replyText=reply_text,
-            terminationReason="model_final",
-            totalCostUsd=updated.conversation.totalCostUsd,
-            turnCount=updated.conversation.turnCount,
         )

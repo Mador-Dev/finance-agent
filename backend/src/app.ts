@@ -7,6 +7,7 @@ import express, {
 import helmet from "helmet";
 import cors from "cors";
 import path from "path";
+import { existsSync } from "fs";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { clerkMiddleware } from "@clerk/express";
 import { logger } from "./services/logger.js";
@@ -17,7 +18,6 @@ import { apiLimiter } from "./middleware/rateLimit.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { ensureUserProvisionedMiddleware } from "./middleware/ensureUserProvisioned.js";
 import { userIsolationMiddleware } from "./middleware/userIsolation.js";
-import { readOnlyGuard } from "./middleware/impersonation.js";
 import authRoutes from "./routes/auth.js";
 import portfolioRoutes from "./routes/portfolio.js";
 import verdictsRoutes from "./routes/verdicts.js";
@@ -25,14 +25,11 @@ import conditionRoutes from "./routes/conditions.js";
 import strategyRoutes from "./routes/strategies.js";
 import reportsRoutes from "./routes/reports.js";
 import onboardingRoutes from "./routes/onboarding.js";
-import telegramRoutes from "./routes/telegram.js";
 import adminRoutes from "./routes/admin.js";
 import searchRoutes from "./routes/search.js";
 import controlRoutes from "./routes/control.js";
 import notificationsRoutes from "./routes/notifications.js";
 import supportRoutes from "./routes/support.js";
-import channelRoutes from "./routes/channels.js";
-import whatsappRoutes from "./routes/whatsapp.js";
 import verdictActionsRoutes from "./routes/verdictActions.js";
 import analystConfigRoutes from "./routes/analystConfig.js";
 
@@ -71,8 +68,6 @@ export function createApp(): Express {
   // Onboarding routes — init doesn't need JWT, portfolio/status do
   // Mounted here so it can have its own auth handling per-route
   app.use("/api/onboard", onboardingRoutes);
-  app.use("/api", telegramRoutes); // POST /api/telegram/webhook — public webhook path
-  app.use("/api", whatsappRoutes); // GET/POST /api/whatsapp/webhook — public webhook path
 
   // Agents proxy — auth-verified, forwards X-User-Id to the internal agents service
   const agentsTarget = process.env["AGENTS_INTERNAL_URL"] ?? "http://localhost:8090";
@@ -113,7 +108,6 @@ export function createApp(): Express {
     authMiddleware,
     ensureUserProvisionedMiddleware,
     userIsolationMiddleware,
-    readOnlyGuard
   );
 
   // Route mounts
@@ -126,16 +120,17 @@ export function createApp(): Express {
   app.use("/api", conditionRoutes); // GET /api/conditions/*
   app.use("/api", strategyRoutes); // GET /api/strategies/*
   app.use("/api", searchRoutes); // GET /api/search/ticker — no user workspace needed
-  app.use("/api", channelRoutes); // POST /api/channels/binding-codes
   app.use("/api", verdictActionsRoutes); // POST /api/verdict-actions, POST /api/snoozes
   app.use("/api", analystConfigRoutes); // GET/PATCH /api/analyst-config
 
   // ── Serve React frontend (SPA fallback) ──────────────────────────────────
   const frontendDist = process.env.FRONTEND_DIST ?? path.resolve(process.cwd(), "../frontend/dist");
-  app.use(express.static(frontendDist));
-  app.get("/{*path}", (_req: Request, res: Response) => {
-    res.sendFile(path.join(frontendDist, "index.html"));
-  });
+  if (existsSync(path.join(frontendDist, "index.html"))) {
+    app.use(express.static(frontendDist));
+    app.get("/{*path}", (_req: Request, res: Response) => {
+      res.sendFile(path.join(frontendDist, "index.html"));
+    });
+  }
 
 
   // Global error handler

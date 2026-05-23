@@ -16,7 +16,7 @@ import { Controls } from "./pages/Controls";
 import { Settings } from "./pages/Settings";
 import { Admin } from "./pages/Admin";
 import { Chat } from "./pages/Chat";
-import { PointsBadge } from "./components/ui/PointsBadge";
+import { TopNav } from "./components/ui/TopNav";
 import { fetchOnboardStatus } from "./api/onboarding";
 import { fetchControlState } from "./api/control";
 import { fetchNotifications, markNotificationsRead } from "./api/notifications";
@@ -99,7 +99,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return (
     <>
       {controlState && <ControlBanner state={controlState} />}
-      <PointsBadge />
       <div>{children}</div>
     </>
   );
@@ -130,6 +129,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={isChatRoute ? "h-[100dvh] overflow-hidden bg-[var(--color-bg-base)]" : "bg-[var(--color-bg-base)] min-h-screen"}>
+      {!isChatRoute && <TopNav />}
       <div className={isChatRoute ? "chat-page-content" : "page-content"}>{children}</div>
       <BottomNav />
     </div>

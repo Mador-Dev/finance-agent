@@ -1,6 +1,7 @@
 import { EntitySchema } from "typeorm";
 import type { JsonValue } from "../../types/index.js";
-import type { JobAction, JobSource, JobStatus, ModelTier } from "../../services/stepQueue/types.js";
+import type { JobAction, JobSource, JobStatus } from "../../types/index.js";
+import type { ModelTier } from "../../services/adminDefaultsService.js";
 
 export interface JobEntity {
   id: string;

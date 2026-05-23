@@ -94,14 +94,14 @@ export async function getConversationHistory(
   conversationId: string
 ): Promise<ConversationHistory> {
   const res = await agentsApiClient.get<ConversationHistory>(
-    `/chat/conversations/${conversationId}`
+    `/agents/chat/conversations/${conversationId}`
   );
   return res.data;
 }
 
 export async function renameSavedConversation(conversationId: string, title: string): Promise<SavedConversation> {
   const res = await agentsApiClient.patch<SavedConversationResponse>(
-    `/chat/conversations/${conversationId}`,
+    `/agents/chat/conversations/${conversationId}`,
     { title }
   );
   return res.data.conversation;
@@ -109,7 +109,7 @@ export async function renameSavedConversation(conversationId: string, title: str
 
 export async function archiveSavedConversation(conversationId: string): Promise<SavedConversation> {
   const res = await agentsApiClient.delete<SavedConversationResponse>(
-    `/chat/conversations/${conversationId}`
+    `/agents/chat/conversations/${conversationId}`
   );
   return res.data.conversation;
 }

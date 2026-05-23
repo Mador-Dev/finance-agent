@@ -114,7 +114,28 @@ def _strategy_from_result(result: Any, *, ticker: str) -> TickerStrategyDraft:
     if isinstance(structured, TickerStrategyDraft):
         return structured
     if isinstance(structured, dict):
-        return TickerStrategyDraft.model_validate(structured)
+        normalized = dict(structured)
+        reasoning = normalized.get("reasoning")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            parts: list[str] = []
+            thesis = normalized.get("thesis")
+            if isinstance(thesis, str) and thesis.strip():
+                parts.append(thesis.strip())
+            bull_case = normalized.get("bull_case")
+            if isinstance(bull_case, str) and bull_case.strip():
+                parts.append(f"Bull case: {bull_case.strip()}")
+            bear_case = normalized.get("bear_case")
+            if isinstance(bear_case, str) and bear_case.strip():
+                parts.append(f"Bear case: {bear_case.strip()}")
+            evidence_summary = normalized.get("evidence_summary")
+            if isinstance(evidence_summary, dict):
+                supporting = evidence_summary.get("supporting")
+                if isinstance(supporting, list):
+                    snippets = [item.strip() for item in supporting if isinstance(item, str) and item.strip()]
+                    if snippets:
+                        parts.append("Supporting evidence: " + "; ".join(snippets[:3]))
+            normalized["reasoning"] = " ".join(parts).strip() or f"Initial bootstrap strategy for {ticker}."
+        return TickerStrategyDraft.model_validate(normalized)
     raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
 
 

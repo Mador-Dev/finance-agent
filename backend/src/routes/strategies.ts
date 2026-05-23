@@ -91,7 +91,9 @@ function rowFromDbRecord(
   trackedStatusByTicker: Map<string, TrackedAssetStatus>
 ): StrategyListRow {
   const now = new Date();
-  const scope: StrategyScope = inPortfolio ? "portfolio" : "tracking";
+  // Use the asset_scope stored in the DB as the source of truth for scope;
+  // fall back to portfolio membership only if assetScope is somehow absent.
+  const scope: StrategyScope = (record.assetScope as StrategyScope) ?? (inPortfolio ? "portfolio" : "tracking");
   const trackingStatus = trackedStatusByTicker.get(record.ticker) ?? record.trackingStatus ?? null;
   const hasExpiredCatalysts = record.catalysts.some(
     (c) => c.expiresAt !== null && new Date(c.expiresAt) < now

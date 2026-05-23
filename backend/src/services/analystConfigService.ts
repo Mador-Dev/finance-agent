@@ -1,5 +1,6 @@
 import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
-import type { StepKind } from "./stepQueue/types.js";
+
+type StepKind = string;
 
 /**
  * Analyst pipeline configuration service.

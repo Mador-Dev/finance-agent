@@ -28,7 +28,6 @@ JobStatus = Literal[
 ]
 Verdict = Literal["BUY", "ADD", "HOLD", "REDUCE", "SELL", "CLOSE"]
 Confidence = Literal["high", "medium", "low"]
-ConversationRole = Literal["user", "assistant", "tool_result"]
 JsonValue = Any
 
 
@@ -205,9 +204,6 @@ class ChatMessageRequest(BaseModel):
 class ChatMessageResponse(BaseModel):
     conversationId: str
     replyText: str
-    terminationReason: str
-    totalCostUsd: float
-    turnCount: int
 
 
 class ConversationCreateRequest(BaseModel):
@@ -219,39 +215,18 @@ class ConversationRenameRequest(BaseModel):
 
 
 class SavedConversation(BaseModel):
-    id: str = Field(pattern=ConversationIdPattern)
+    id: str
     userId: str
-    channel: str = "dashboard"
     title: str | None = None
-    startedAt: str
-    updatedAt: str
-    lastActivityAt: str
-    archivedAt: str | None = None
-    expiresAt: str | None = None
-    endedAt: str | None = None
-    turnCount: int = 0
-    totalTokensIn: int = 0
-    totalTokensOut: int = 0
-    totalCostUsd: float = 0
-    terminationReason: str | None = None
-    toolCallCount: int = 0
-    model: str | None = None
-    accessState: Literal["active", "archived", "expired"] = "active"
-    isArchived: bool = False
-    isExpired: bool = False
-
-
-class ConversationTurn(BaseModel):
-    conversationId: str = Field(pattern=ConversationIdPattern)
-    turnIndex: int = Field(ge=0)
-    role: ConversationRole | str
-    content: Any
-    model: str | None = None
-    tokensIn: int = 0
-    tokensOut: int = 0
-    costUsd: float = 0
-    latencyMs: int = 0
     createdAt: str
+
+
+class ChatMemoryEntry(BaseModel):
+    id: str
+    conversationId: str
+    sequenceNumber: int
+    role: str
+    content: str
 
 
 class SavedConversationListResponse(BaseModel):
@@ -266,7 +241,7 @@ class SavedConversationResponse(BaseModel):
 
 class ConversationHistory(BaseModel):
     conversation: SavedConversation
-    turns: list[ConversationTurn]
+    turns: list[ChatMemoryEntry]
 
 
 def utc_now() -> str:

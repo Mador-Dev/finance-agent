@@ -1,7 +1,12 @@
 import { DEFAULT_POINTS_BUDGET, type PointsBudgetConfig } from "../types/index.js";
 import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
-import { MODEL_TIERS, type ModelTier } from "./stepQueue/types.js";
-import { isModelTier } from "./stepQueue/modelTier.js";
+
+const MODEL_TIERS = ["free", "cheap", "balanced", "expensive"] as const;
+type ModelTier = typeof MODEL_TIERS[number];
+function isModelTier(v: unknown): v is ModelTier {
+  return (MODEL_TIERS as readonly string[]).includes(v as string);
+}
+export { MODEL_TIERS, type ModelTier, isModelTier };
 
 export interface AdminDefaults {
   modelTier: ModelTier;

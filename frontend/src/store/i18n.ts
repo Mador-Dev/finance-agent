@@ -295,7 +295,7 @@ export const translations: Translations = {
     portfolio: "Portfolio",
     errorLoadPortfolio: "Failed to load portfolio",
     emptyPortfolio: "No positions found",
-    addPosition: "+ Add Position",
+    addPosition: "Add Position",
     colTicker: "Ticker",
     colShares: "Shares",
     colAvgPrice: "Avg ₪",

@@ -1,5 +1,4 @@
 import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
-import { listBatchesWithEntries, type BatchWithEntries } from "./reportIndexStore.js";
 
 const MAX_STORED_EVENTS = 250;
 export const FEED_PAGE_SIZE = 15;
@@ -105,6 +104,114 @@ export interface FeedQuery {
   pageNum: number;
   mode?: string | null;
   search?: string | null;
+}
+
+interface JobBatchRow {
+  id: string;
+  action: string;
+  status: string;
+  triggered_at: Date | string;
+  completed_at: Date | string | null;
+  result: unknown;
+}
+
+function toIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function normalizeEntry(ticker: string, mode: string, raw: unknown): StoredBatchEntry | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const verdict = typeof record["verdict"] === "string" ? record["verdict"] : "HOLD";
+  const confidence = typeof record["confidence"] === "string" ? record["confidence"] : "medium";
+  const reasoning = typeof record["reasoning"] === "string" ? record["reasoning"] : "";
+  const timeframe = typeof record["timeframe"] === "string" ? record["timeframe"] : "months";
+  return {
+    ticker,
+    mode,
+    verdict,
+    confidence,
+    reasoning,
+    timeframe,
+    analystTypes: asStringArray(record["analystTypes"]),
+    hasBullCase: Boolean(record["hasBullCase"]),
+    hasBearCase: Boolean(record["hasBearCase"]),
+  };
+}
+
+function parseStoredBatch(row: JobBatchRow): StoredBatch | null {
+  if (!row.result || typeof row.result !== "object" || Array.isArray(row.result)) return null;
+  const root = row.result as Record<string, unknown>;
+  const nestedResult =
+    root["result"] && typeof root["result"] === "object" && !Array.isArray(root["result"])
+      ? (root["result"] as Record<string, unknown>)
+      : null;
+  const rawBatch = root["batch"] ?? nestedResult?.["batch"];
+  if (!rawBatch || typeof rawBatch !== "object" || Array.isArray(rawBatch)) return null;
+  const batch = rawBatch as Record<string, unknown>;
+
+  const entriesRecord =
+    batch["entries"] && typeof batch["entries"] === "object" && !Array.isArray(batch["entries"])
+      ? (batch["entries"] as Record<string, unknown>)
+      : {};
+
+  const normalizedEntries = Object.fromEntries(
+    Object.entries(entriesRecord)
+      .map(([ticker, entry]) => [ticker, normalizeEntry(ticker, String(batch["mode"] ?? row.action), entry)] as const)
+      .filter((item): item is readonly [string, StoredBatchEntry] => item[1] !== null)
+  );
+
+  const tickers = asStringArray(batch["tickers"]);
+  if (tickers.length === 0 || Object.keys(normalizedEntries).length === 0) return null;
+
+  const triggeredAt = typeof batch["triggeredAt"] === "string"
+    ? batch["triggeredAt"]
+    : toIso(row.completed_at) ?? toIso(row.triggered_at) ?? new Date().toISOString();
+
+  const storedBatch: StoredBatch = {
+    batchId: typeof batch["batchId"] === "string" ? batch["batchId"] : row.id,
+    triggeredAt,
+    date: typeof batch["date"] === "string" ? batch["date"] : triggeredAt.slice(0, 10),
+    mode: typeof batch["mode"] === "string" ? batch["mode"] : row.action,
+    tickers,
+    tickerCount: typeof batch["tickerCount"] === "number" ? batch["tickerCount"] : tickers.length,
+    jobId: typeof batch["jobId"] === "string" ? batch["jobId"] : row.id,
+    entries: normalizedEntries,
+  };
+  const summary =
+    batch["summary"] && typeof batch["summary"] === "object" && !Array.isArray(batch["summary"])
+      ? (batch["summary"] as StoredBatch["summary"])
+      : null;
+  const highlights = asStringArray(batch["highlights"]);
+  if (summary) storedBatch.summary = summary;
+  if (highlights.length > 0) storedBatch.highlights = highlights;
+  return storedBatch;
+}
+
+async function listReportBatches(userId: string, limit = MAX_STORED_EVENTS): Promise<StoredBatch[]> {
+  if (!isApplicationDatabaseConfigured()) return [];
+  const ds = await getApplicationDataSource();
+  const rows = (await ds.query(
+    `SELECT id, action, status, triggered_at, completed_at, result
+       FROM jobs
+      WHERE user_id = $1
+        AND status IN ('completed', 'partial_completed')
+        AND action IN ('daily_brief', 'full_report', 'deep_dive', 'quick_check')
+      ORDER BY COALESCE(completed_at, triggered_at) DESC
+      LIMIT $2`,
+    [userId, limit]
+  )) as JobBatchRow[];
+
+  return rows
+    .map(parseStoredBatch)
+    .filter((batch): batch is StoredBatch => batch !== null);
 }
 
 function toneForMode(mode: string): FeedItem["tone"] {
@@ -301,22 +408,6 @@ export async function appendFeedEvent(
   return record;
 }
 
-function batchWithEntriesToStoredBatch(b: BatchWithEntries): StoredBatch {
-  const summaryRaw = b.summary as Record<string, unknown> | null;
-  const batch: StoredBatch = {
-    batchId: b.batchId,
-    triggeredAt: b.triggeredAt,
-    date: b.date,
-    mode: b.mode,
-    tickers: b.tickers,
-    tickerCount: b.tickerCount,
-    jobId: b.jobId,
-    entries: b.entries as unknown as Record<string, StoredBatchEntry>,
-  };
-  if (summaryRaw) batch.summary = summaryRaw as NonNullable<StoredBatch["summary"]>;
-  if (Array.isArray(b.highlights)) batch.highlights = b.highlights as string[];
-  return batch;
-}
 
 function toEventFeedItem(event: FeedEventRecord): FeedItem {
   return {
@@ -382,13 +473,11 @@ export async function readFeedPage(
   appliedSearch: string | null;
   items: FeedItem[];
 }> {
-  const [rawBatches, events] = await Promise.all([
-    listBatchesWithEntries(userId, MAX_STORED_EVENTS),
-    listFeedEvents(userId, MAX_STORED_EVENTS),
-  ]);
-  const batches = rawBatches.map(batchWithEntriesToStoredBatch);
+  const reportBatches = await listReportBatches(userId, MAX_STORED_EVENTS);
+  const events = await listFeedEvents(userId, MAX_STORED_EVENTS);
+  const reportItems = buildReportFeedItems(reportBatches);
 
-  const allItems = [...events.map(toEventFeedItem), ...buildReportFeedItems(batches)]
+  const allItems = [...reportItems, ...events.map(toEventFeedItem)]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .filter((item) => matchesFeedItem(item, query.mode, query.search));
 

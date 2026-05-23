@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.app.chat_service import ChatService
 from agents.app.jobs_service import JobsService
+from agents.app.points import PointsBudgetExceededError
 from agents.app.schemas import (
     BootstrapJobResult,
     BootstrapStartRequest,
@@ -64,7 +68,13 @@ async def start_bootstrap(
 ) -> BootstrapStartResponse:
     if payload.userId != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    job = await bootstrap_service.start_bootstrap(payload)
+    try:
+        job = await bootstrap_service.start_bootstrap(payload)
+    except PointsBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={"code": "points_budget_exhausted", "message": str(exc)},
+        ) from exc
     return BootstrapStartResponse(jobId=job.jobId, status=job.status, totalTickers=job.totalTickers)
 
 
@@ -115,6 +125,8 @@ async def list_jobs(user_id: str = Depends(require_user)) -> JobsResponse:
         return jobs_service.list_jobs(user_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/agents/jobs/{job_id}")
@@ -132,6 +144,11 @@ async def trigger_job(
 ) -> TriggerResponse:
     try:
         job = await jobs_service.trigger(user_id, payload)
+    except PointsBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={"code": "points_budget_exhausted", "message": str(exc)},
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -168,6 +185,11 @@ async def send_chat_message(
     try:
         conversation_id = payload.conversationId or chat_service.create_conversation(user_id, None).id
         return await chat_service.send_message(user_id, payload.text, conversation_id)
+    except PointsBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={"code": "points_budget_exhausted", "message": str(exc)},
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -229,6 +251,47 @@ async def archive_conversation(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SavedConversationResponse(conversation=conversation)
+
+
+
+# ── Daily brief scheduler ─────────────────────────────────────────────────────
+
+
+async def _trigger_due_daily_briefs() -> None:
+    from zoneinfo import ZoneInfo
+    users = agent_store.load_active_user_schedules()
+    now = datetime.now(tz=timezone.utc)
+    for user_id, schedule in users:
+        tz_name = schedule.get("timezone", "UTC")
+        brief_time = schedule.get("dailyBriefTime", "")
+        if not brief_time:
+            continue
+        try:
+            local_now = now.astimezone(ZoneInfo(tz_name))
+        except Exception:
+            continue
+        if local_now.strftime("%H:%M") != brief_time:
+            continue
+        if agent_store.was_daily_brief_run_today(user_id):
+            continue
+        try:
+            await jobs_service.trigger(user_id, TriggerJobRequest(action="daily_brief", ticker=None))
+        except Exception as exc:
+            print(f"[scheduler] daily_brief trigger failed for {user_id}: {exc}", flush=True)
+
+
+async def _daily_brief_scheduler_loop() -> None:
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await _trigger_due_daily_briefs()
+        except Exception as exc:
+            print(f"[scheduler] error: {exc}", flush=True)
+
+
+@app.on_event("startup")
+async def _start_scheduler() -> None:
+    asyncio.create_task(_daily_brief_scheduler_loop())
 
 
 __all__ = ["app"]

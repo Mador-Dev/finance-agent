@@ -11,10 +11,7 @@ import {
   PositionGuidanceCompletionSchema,
   type PositionGuidance,
 } from "../schemas/onboarding.js";
-import {
-  ConnectWhatsAppRequestSchema,
-  TelegramConnectRequestSchema,
-} from "../schemas/channels.js";
+import { TelegramConnectRequestSchema } from "../schemas/channels.js";
 import { PortfolioFileSchema } from "../schemas/portfolio.js";
 import { hashPassword, verifyPassword } from "../middleware/auth.js";
 import { writeUserAuth } from "../services/userStore.js";
@@ -28,26 +25,16 @@ import {
 import { authMiddleware } from "../middleware/auth.js";
 import { ensureUserProvisionedMiddleware } from "../middleware/ensureUserProvisioned.js";
 import { userIsolationMiddleware } from "../middleware/userIsolation.js";
-import { readOnlyGuard } from "../middleware/impersonation.js";
 import { getNotificationPreferences, setNotificationPreferences } from "../services/notificationService.js";
 import { readState, writeState } from "../services/stateService.js";
-import {
-  connectUserTelegramChannel,
-  connectUserWhatsAppChannel,
-  disconnectUserTelegramChannel,
-  disconnectUserWhatsAppChannel,
-  getUserChannelConnectivity,
-} from "../services/channelService.js";
+import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
 
 const router = Router();
 
-// Applied to every authenticated onboarding route (all except POST /init which uses X-Admin-Key).
-// Ordering matters: auth sets userId, isolation builds workspace, readOnlyGuard blocks impersonation writes.
 const authGuard = [
   authMiddleware,
   ensureUserProvisionedMiddleware,
   userIsolationMiddleware,
-  readOnlyGuard,
 ] as const;
 
 type AsyncHandler = (
@@ -327,16 +314,24 @@ router.get(
           }
         : null;
 
-    const [connectivity, notifications] = await Promise.all([
-      getUserChannelConnectivity(userId),
-      getNotificationPreferences(userId),
-    ]);
+    let telegramChatId: string | null = null;
+    let telegramConnected = false;
+    if (isApplicationDatabaseConfigured()) {
+      const ds = await getApplicationDataSource();
+      const userRows = await ds.query(
+        `SELECT telegram_chat_id, telegram_bot_token FROM users WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      ) as Array<{ telegram_chat_id: string | null; telegram_bot_token: string | null }>;
+      telegramChatId = userRows[0]?.telegram_chat_id ?? null;
+      telegramConnected = !!telegramChatId && !!userRows[0]?.telegram_bot_token;
+    }
+    const notifications = await getNotificationPreferences(userId);
 
     res.json({
       userId,
       state: stateData.state,
       displayName: profile?.displayName ?? null,
-      telegramChatId: connectivity.telegram.target ?? profile?.telegramChatId ?? null,
+      telegramChatId,
       bootstrapProgress,
       portfolioLoaded,
       guidanceStepPending: stateData.onboarding?.positionGuidanceStatus === "pending",
@@ -344,8 +339,7 @@ router.get(
       readyForTrading: stateData.state === "ACTIVE",
       schedule: profile?.schedule ?? null,
       notifications,
-      telegramConnected: connectivity.telegram.connected,
-      connectivity,
+      telegramConnected,
     });
   })
 );
@@ -361,14 +355,14 @@ router.post(
       res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
       return;
     }
-
-    await connectUserTelegramChannel(ws.userId, parsed.data.botToken, parsed.data.telegramChatId);
-
-    res.json({
-      connected: true,
-      channel: "telegram",
-      connectivity: await getUserChannelConnectivity(ws.userId),
-    });
+    if (isApplicationDatabaseConfigured()) {
+      const ds = await getApplicationDataSource();
+      await ds.query(
+        `UPDATE users SET telegram_chat_id = $1, telegram_bot_token = $2 WHERE user_id = $3`,
+        [parsed.data.telegramChatId, parsed.data.botToken, ws.userId]
+      );
+    }
+    res.json({ connected: true, channel: "telegram" });
   })
 );
 
@@ -378,46 +372,14 @@ router.delete(
   ...authGuard,
   handler(async (_req: AuthenticatedRequest, res: Response) => {
     const ws = res.locals["workspace"] as UserWorkspace;
-    await disconnectUserTelegramChannel(ws.userId);
-    res.json({
-      connected: false,
-      channel: "telegram",
-      connectivity: await getUserChannelConnectivity(ws.userId),
-    });
-  })
-);
-
-router.put(
-  "/whatsapp",
-  ...authGuard,
-  handler(async (req: AuthenticatedRequest, res: Response) => {
-    const ws = res.locals["workspace"] as UserWorkspace;
-    const parsed = ConnectWhatsAppRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
-      return;
+    if (isApplicationDatabaseConfigured()) {
+      const ds = await getApplicationDataSource();
+      await ds.query(
+        `UPDATE users SET telegram_chat_id = NULL, telegram_bot_token = NULL WHERE user_id = $1`,
+        [ws.userId]
+      );
     }
-
-    await connectUserWhatsAppChannel(ws.userId, parsed.data);
-    res.json({
-      connected: true,
-      channel: "whatsapp",
-      connectivity: await getUserChannelConnectivity(ws.userId),
-    });
-  })
-);
-
-router.delete(
-  "/whatsapp",
-  ...authGuard,
-  handler(async (_req: AuthenticatedRequest, res: Response) => {
-    const ws = res.locals["workspace"] as UserWorkspace;
-    await disconnectUserWhatsAppChannel(ws.userId);
-    res.json({
-      connected: false,
-      channel: "whatsapp",
-      connectivity: await getUserChannelConnectivity(ws.userId),
-    });
+    res.json({ connected: false, channel: "telegram" });
   })
 );
 

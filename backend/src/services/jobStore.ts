@@ -1,8 +1,7 @@
 import { getApplicationDataSource, isApplicationDatabaseConfigured } from "../db/applicationDataSource.js";
 import type { Job, JobAction, JobSource, JobStatus } from "../types/index.js";
 import type { JsonValue } from "../types/index.js";
-import { readUserModelTier } from "./stepQueue/modelTier.js";
-import { MODEL_TIERS, type ModelTier } from "./stepQueue/types.js";
+import { getAdminDefaults, type ModelTier } from "./adminDefaultsService.js";
 
 const LEGACY_TICKER_META_KEY = "__legacyTicker";
 
@@ -65,18 +64,13 @@ function rowToJob(row: JobRow, ticker: string | null): Job {
   };
 }
 
-async function resolveJobTicker(jobId: string): Promise<string | null> {
-  const ds = await getApplicationDataSource();
-  const rows = (await ds.query(
-    `SELECT ticker FROM ticker_work_items WHERE job_id = $1 ORDER BY position ASC LIMIT 1`,
-    [jobId]
-  )) as Array<{ ticker: string }>;
-  return rows[0]?.ticker ?? null;
+async function resolveJobTicker(_jobId: string): Promise<string | null> {
+  return null;
 }
 
-async function resolveModelTier(userId: string): Promise<ModelTier> {
-  const tier = await readUserModelTier(userId);
-  return (MODEL_TIERS as readonly string[]).includes(tier) ? tier : "balanced";
+async function resolveModelTier(_userId: string): Promise<ModelTier> {
+  const defaults = await getAdminDefaults();
+  return defaults.modelTier;
 }
 
 export async function createJobInDb(

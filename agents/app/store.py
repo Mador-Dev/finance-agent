@@ -12,8 +12,8 @@ from agents.app.schemas import (
     BootstrapJobState,
     BootstrapStartRequest,
     BootstrapTickerState,
+    ChatMemoryEntry,
     ConversationHistory,
-    ConversationTurn,
     JobProgress,
     JobRecord,
     JobsResponse,
@@ -289,6 +289,27 @@ def load_strategy(user_id: str, ticker: str) -> dict | None:
     }
 
 
+def load_active_user_schedules() -> list[tuple[str, dict]]:
+    rows = fetch_all("SELECT user_id, schedule FROM users WHERE state = 'ACTIVE'")
+    return [(r["user_id"], r["schedule"] or {}) for r in rows]
+
+
+def was_daily_brief_run_today(user_id: str) -> bool:
+    """True if a daily_brief is already pending/running/done within the last 23 hours."""
+    row = fetch_one(
+        """
+        SELECT 1 FROM jobs
+        WHERE user_id = %s
+          AND action = 'daily_brief'
+          AND status IN ('pending', 'running', 'completed', 'partial_completed')
+          AND triggered_at > NOW() - INTERVAL '23 hours'
+        LIMIT 1
+        """,
+        (user_id,),
+    )
+    return row is not None
+
+
 def list_report_summaries(user_id: str, limit: int = 5) -> list[dict]:
     rows = fetch_all(
         """
@@ -299,6 +320,114 @@ def list_report_summaries(user_id: str, limit: int = 5) -> list[dict]:
         (user_id, limit),
     )
     return [r["payload"] for r in rows if isinstance(r.get("payload"), dict)]
+
+
+def write_analysis_artifacts(
+    user_id: str,
+    action: str,
+    ticker: str,
+    strategy: TickerStrategyDraft,
+) -> None:
+    now = utc_now()
+    strategy_payload = {
+        "ticker": ticker,
+        "verdict": strategy.verdict,
+        "confidence": strategy.confidence,
+        "reasoning": strategy.reasoning,
+        "timeframe": strategy.timeframe,
+        "entryConditions": [],
+        "exitConditions": strategy.invalidation_conditions[:5],
+        "catalysts": [c.model_dump() for c in strategy.catalysts],
+        "bullCase": strategy.bull_case,
+        "bearCase": strategy.bear_case,
+        "updatedAt": now,
+    }
+    upsert_report_artifact(user_id, ticker, "strategy", strategy_payload)
+
+    quick_check_payload = {
+        "score": None,
+        "decision": "escalate" if strategy.verdict in {"REDUCE", "SELL", "CLOSE"} else "safe",
+        "signals": [strategy.verdict, strategy.confidence, strategy.timeframe],
+        "strategy_health": strategy.invalidation_conditions[:3] or strategy.key_risks[:3],
+        "advisor_summary": strategy.reasoning,
+        "advisor_reasons": strategy.evidence_summary.supporting[:3] + strategy.evidence_summary.conflicting[:2],
+        "escalation_reason": strategy.key_risks[0] if strategy.key_risks else None,
+        "updatedAt": now,
+        "sourceAction": action,
+    }
+    upsert_report_artifact(user_id, ticker, "quick_check", quick_check_payload)
+
+    for artifact_key in ("fundamentals", "technical", "sentiment", "macro", "risk"):
+        report_payload = strategy.analyst_reports.get(artifact_key)
+        if isinstance(report_payload, dict) and report_payload:
+            upsert_report_artifact(user_id, ticker, artifact_key, report_payload)
+
+    if strategy.bull_case:
+        upsert_report_artifact(
+            user_id,
+            ticker,
+            "bull_case",
+            {"coreThesis": strategy.bull_case, "arguments": [], "round": 1},
+        )
+    if strategy.bear_case:
+        upsert_report_artifact(
+            user_id,
+            ticker,
+            "bear_case",
+            {"coreConcern": strategy.bear_case, "arguments": [], "round": 1},
+        )
+
+
+def build_job_batch(job: JobRecord, strategies: list[TickerStrategyDraft], completed: list[str]) -> dict[str, Any] | None:
+    if not strategies or not completed:
+        return None
+
+    entries: dict[str, dict[str, Any]] = {}
+    for strategy in strategies:
+        ticker = strategy.ticker.strip().upper()
+        entries[ticker] = {
+            "ticker": ticker,
+            "mode": job.action,
+            "verdict": strategy.verdict,
+            "confidence": strategy.confidence,
+            "reasoning": strategy.reasoning,
+            "timeframe": strategy.timeframe,
+            "analystTypes": (
+                ["quick_check"]
+                if job.action in {"quick_check", "daily_brief", "full_report"}
+                else [k for k in ("fundamentals", "technical", "sentiment", "macro", "risk") if k in strategy.analyst_reports]
+            ),
+            "hasBullCase": bool(strategy.bull_case),
+            "hasBearCase": bool(strategy.bear_case),
+        }
+
+    highlights = [
+        f"{item.ticker} {item.verdict} ({item.confidence})"
+        for item in strategies[:3]
+    ]
+    summary = None
+    if job.action == "daily_brief":
+        summary = {
+            "headline": f"Daily brief completed across {len(completed)} position{'s' if len(completed) != 1 else ''}.",
+            "today": "; ".join(highlights[:2]) if highlights else None,
+            "tomorrow": None,
+            "marketView": None,
+            "securityNote": None,
+            "dashboardPath": "/reports",
+        }
+
+    return {
+        "batchId": job.id,
+        "triggeredAt": job.completed_at or job.started_at or job.triggered_at,
+        "date": (job.completed_at or job.started_at or job.triggered_at)[:10],
+        "mode": job.action,
+        "tickers": completed.copy(),
+        "tickerCount": len(completed),
+        "jobId": job.id,
+        "entries": entries,
+        "summary": summary,
+        "highlights": highlights,
+    }
 
 
 # ── Bootstrap jobs ────────────────────────────────────────────────────────────
@@ -503,7 +632,13 @@ def list_jobs(user_id: str, limit: int = 50) -> JobsResponse:
         "SELECT id, user_id, action, status, triggered_at, started_at, completed_at, failure_reason, result, source FROM jobs WHERE user_id = %s ORDER BY triggered_at DESC LIMIT %s",
         (user_id, limit),
     )
-    return JobsResponse(jobs=[_row_to_job(r) for r in rows])
+    jobs = []
+    for r in rows:
+        try:
+            jobs.append(_row_to_job(r))
+        except Exception:
+            pass
+    return JobsResponse(jobs=jobs)
 
 
 def _row_to_job(row: dict) -> JobRecord:
@@ -547,29 +682,17 @@ def _row_to_job(row: dict) -> JobRecord:
 
 
 def create_conversation(user_id: str, title: str | None) -> SavedConversation:
-    conv_id = f"conv_{uuid.uuid4().hex[:12]}"
+    conv_id = str(uuid.uuid4())
     execute(
-        "INSERT INTO conversations (id, user_id, channel, title, started_at, updated_at) VALUES (%s, %s, 'dashboard', %s, NOW(), NOW())",
+        "INSERT INTO conversations (id, user_id, title) VALUES (%s, %s, %s)",
         (conv_id, user_id, title),
     )
-    now = utc_now()
-    return SavedConversation(
-        id=conv_id, userId=user_id, title=title,
-        startedAt=now, updatedAt=now, lastActivityAt=now,
-    )
+    return SavedConversation(id=conv_id, userId=user_id, title=title, createdAt=utc_now())
 
 
 def list_conversations(user_id: str, limit: int, offset: int) -> list[SavedConversation]:
     rows = fetch_all(
-        """
-        SELECT id, user_id, channel, title, started_at, updated_at,
-               archived_at, expires_at, ended_at, turn_count,
-               total_tokens_in, total_tokens_out, total_cost_usd,
-               termination_reason, tool_call_count, model
-        FROM conversations
-        WHERE user_id = %s AND archived_at IS NULL
-        ORDER BY updated_at DESC LIMIT %s OFFSET %s
-        """,
+        "SELECT id, user_id, title, created_at FROM conversations WHERE user_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s",
         (user_id, limit, offset),
     )
     return [_row_to_conversation(r) for r in rows]
@@ -577,71 +700,40 @@ def list_conversations(user_id: str, limit: int, offset: int) -> list[SavedConve
 
 def load_conversation(user_id: str, conv_id: str) -> ConversationHistory:
     row = fetch_one(
-        """
-        SELECT id, user_id, channel, title, started_at, updated_at,
-               archived_at, expires_at, ended_at, turn_count,
-               total_tokens_in, total_tokens_out, total_cost_usd,
-               termination_reason, tool_call_count, model
-        FROM conversations WHERE id = %s AND user_id = %s
-        """,
+        "SELECT id, user_id, title, created_at FROM conversations WHERE id = %s AND user_id = %s",
         (conv_id, user_id),
     )
     if not row:
         raise FileNotFoundError(f"Conversation not found: {conv_id}")
-    turn_rows = fetch_all(
-        "SELECT conversation_id, turn_index, role, content, model, tokens_in, tokens_out, cost_usd, latency_ms, created_at FROM conversation_turns WHERE conversation_id = %s ORDER BY turn_index",
+    memory_rows = fetch_all(
+        "SELECT id, conversation_id, sequence_number, role, content FROM chat_memory WHERE conversation_id = %s ORDER BY sequence_number",
         (conv_id,),
     )
-    return ConversationHistory(conversation=_row_to_conversation(row), turns=[_row_to_turn(r) for r in turn_rows])
-
-
-def append_turns(
-    user_id: str,
-    conv_id: str,
-    turns: list[ConversationTurn],
-    *,
-    model: str | None,
-    cost_usd: float,
-    tool_call_count: int,
-) -> ConversationHistory:
-    for turn in turns:
-        execute(
-            """
-            INSERT INTO conversation_turns
-              (conversation_id, turn_index, role, content, model, tokens_in, tokens_out, cost_usd, latency_ms)
-            VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
-            ON CONFLICT (conversation_id, turn_index) DO NOTHING
-            """,
-            (
-                conv_id, turn.turnIndex, turn.role,
-                json.dumps(turn.content),
-                turn.model, turn.tokensIn, turn.tokensOut, turn.costUsd, turn.latencyMs,
-            ),
-        )
-    ua_count = sum(1 for t in turns if t.role in {"user", "assistant"})
-    execute(
-        """
-        UPDATE conversations SET
-          turn_count = turn_count + %s,
-          total_cost_usd = total_cost_usd + %s,
-          tool_call_count = tool_call_count + %s,
-          model = COALESCE(%s, model),
-          updated_at = NOW()
-        WHERE id = %s
-        """,
-        (ua_count, cost_usd, tool_call_count, model, conv_id),
+    return ConversationHistory(
+        conversation=_row_to_conversation(row),
+        turns=[_row_to_memory(r) for r in memory_rows],
     )
-    return load_conversation(user_id, conv_id)
+
+
+def append_message(conv_id: str, role: str, content: str) -> ChatMemoryEntry:
+    entry_id = str(uuid.uuid4())
+    row = fetch_one(
+        "INSERT INTO chat_memory (id, conversation_id, role, content) VALUES (%s, %s, %s, %s) RETURNING id, conversation_id, sequence_number, role, content",
+        (entry_id, conv_id, role, content),
+    )
+    if not row:
+        raise RuntimeError("Failed to insert chat memory entry")
+    return _row_to_memory(row)
 
 
 def rename_conversation(user_id: str, conv_id: str, title: str) -> SavedConversation:
     execute(
-        "UPDATE conversations SET title = %s, updated_at = NOW() WHERE id = %s AND user_id = %s",
+        "UPDATE conversations SET title = %s WHERE id = %s AND user_id = %s",
         (title, conv_id, user_id),
     )
     row = fetch_one(
-        "SELECT id, user_id, channel, title, started_at, updated_at, archived_at, expires_at, ended_at, turn_count, total_tokens_in, total_tokens_out, total_cost_usd, termination_reason, tool_call_count, model FROM conversations WHERE id = %s",
-        (conv_id,),
+        "SELECT id, user_id, title, created_at FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user_id),
     )
     if not row:
         raise FileNotFoundError(f"Conversation not found: {conv_id}")
@@ -649,60 +741,30 @@ def rename_conversation(user_id: str, conv_id: str, title: str) -> SavedConversa
 
 
 def archive_conversation(user_id: str, conv_id: str) -> SavedConversation:
-    execute(
-        "UPDATE conversations SET archived_at = NOW(), updated_at = NOW() WHERE id = %s AND user_id = %s",
-        (conv_id, user_id),
-    )
     row = fetch_one(
-        "SELECT id, user_id, channel, title, started_at, updated_at, archived_at, expires_at, ended_at, turn_count, total_tokens_in, total_tokens_out, total_cost_usd, termination_reason, tool_call_count, model FROM conversations WHERE id = %s",
-        (conv_id,),
+        "SELECT id, user_id, title, created_at FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user_id),
     )
     if not row:
         raise FileNotFoundError(f"Conversation not found: {conv_id}")
+    execute("DELETE FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
     return _row_to_conversation(row)
 
 
-def set_termination_reason(conv_id: str, reason: str) -> None:
-    execute("UPDATE conversations SET termination_reason = %s WHERE id = %s", (reason, conv_id))
-
-
 def _row_to_conversation(row: dict) -> SavedConversation:
-    archived = _ts(row.get("archived_at"))
-    updated = _ts(row.get("updated_at")) or utc_now()
     return SavedConversation(
-        id=row["id"],
+        id=str(row["id"]),
         userId=row["user_id"],
-        channel=row.get("channel", "dashboard"),
         title=row.get("title"),
-        startedAt=_ts(row.get("started_at")) or updated,
-        updatedAt=updated,
-        lastActivityAt=updated,
-        archivedAt=archived,
-        expiresAt=_ts(row.get("expires_at")),
-        endedAt=_ts(row.get("ended_at")),
-        turnCount=row.get("turn_count") or 0,
-        totalTokensIn=row.get("total_tokens_in") or 0,
-        totalTokensOut=row.get("total_tokens_out") or 0,
-        totalCostUsd=float(row.get("total_cost_usd") or 0),
-        terminationReason=row.get("termination_reason"),
-        toolCallCount=row.get("tool_call_count") or 0,
-        model=row.get("model"),
-        accessState="archived" if archived else "active",
-        isArchived=archived is not None,
+        createdAt=_ts(row.get("created_at")) or utc_now(),
     )
 
 
-def _row_to_turn(row: dict) -> ConversationTurn:
-    content = row["content"]
-    return ConversationTurn(
-        conversationId=row["conversation_id"],
-        turnIndex=row["turn_index"],
+def _row_to_memory(row: dict) -> ChatMemoryEntry:
+    return ChatMemoryEntry(
+        id=str(row["id"]),
+        conversationId=str(row["conversation_id"]),
+        sequenceNumber=row["sequence_number"],
         role=row["role"],
-        content=content,
-        model=row.get("model"),
-        tokensIn=row.get("tokens_in") or 0,
-        tokensOut=row.get("tokens_out") or 0,
-        costUsd=float(row.get("cost_usd") or 0),
-        latencyMs=row.get("latency_ms") or 0,
-        createdAt=_ts(row.get("created_at")) or utc_now(),
+        content=row["content"],
     )
