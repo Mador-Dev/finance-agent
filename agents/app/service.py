@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from agents.app.config import get_settings
 from agents.app.points import POINT_COSTS, require_points
@@ -77,8 +80,11 @@ class BootstrapService:
     async def _run_job(self, payload: BootstrapStartRequest, job: BootstrapJobState) -> None:
         job.status = "running"
         job.startedAt = utc_now()
-        store.save_bootstrap_job(job)
-        store.save_bootstrap_progress(payload.userId, job.totalTickers, [])
+        try:
+            store.save_bootstrap_job(job)
+            store.save_bootstrap_progress(payload.userId, job.totalTickers, [])
+        except Exception:
+            logger.exception("Failed to persist running status for bootstrap job %s", job.jobId)
 
         ticker_states = {item.ticker: item for item in job.tickers}
         position_lookup = self._position_lookup(payload.accounts)
@@ -92,21 +98,65 @@ class BootstrapService:
                 job.currentTicker = ticker
                 job.currentStep = "planner"
                 self._refresh_progress(job)
-                store.save_bootstrap_job(job)
                 try:
-                    strategy = await invoke_bootstrap_agent(
-                        self.settings,
-                        ticker=ticker,
-                        position_context=position_lookup[ticker],
-                        guidance=payload.guidance.get(ticker),
+                    store.save_bootstrap_job(job)
+                except Exception:
+                    logger.exception("Failed to save bootstrap job progress for ticker %s", ticker)
+                try:
+                    strategy = await asyncio.wait_for(
+                        invoke_bootstrap_agent(
+                            self.settings,
+                            ticker=ticker,
+                            position_context=position_lookup[ticker],
+                            guidance=payload.guidance.get(ticker),
+                        ),
+                        timeout=self.settings.ticker_timeout_seconds,
                     )
                     state.currentStep = "synthesis"
-                    store.save_bootstrap_job(job)
+                    try:
+                        store.save_bootstrap_job(job)
+                    except Exception:
+                        logger.exception("Failed to save synthesis step for ticker %s", ticker)
                     return ticker, strategy, None
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Bootstrap ticker %s timed out after %ds in job %s",
+                        ticker, self.settings.ticker_timeout_seconds, job.jobId,
+                    )
+                    return ticker, None, f"Bootstrap timed out after {self.settings.ticker_timeout_seconds}s"
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
-                    return ticker, None, str(exc)
+                    logger.exception("Bootstrap agent failed for ticker %s in job %s", ticker, job.jobId)
+                    return ticker, None, str(exc)[:2000]
 
-        results = await asyncio.gather(*(run_ticker(t.ticker) for t in job.tickers))
+        try:
+            raw_results = await asyncio.gather(
+                *(run_ticker(t.ticker) for t in job.tickers),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            logger.exception("asyncio.gather failed for bootstrap job %s", job.jobId)
+            job.status = "failed"
+            job.error = f"Job execution failed: {str(exc)[:2000]}"
+            job.completedAt = utc_now()
+            job.currentTicker = None
+            job.currentStep = None
+            self._refresh_progress(job)
+            try:
+                store.save_bootstrap_job(job)
+            except Exception:
+                logger.exception("Failed to persist failed status for bootstrap job %s", job.jobId)
+            return
+
+        # Normalise results — return_exceptions=True means some entries may be BaseException.
+        results: list[tuple[str, TickerStrategyDraft | None, str | None]] = []
+        for item, raw in zip(job.tickers, raw_results):
+            if isinstance(raw, BaseException):
+                logger.error("Ticker %s raised unexpectedly in bootstrap job %s: %s", item.ticker, job.jobId, raw)
+                results.append((item.ticker, None, str(raw)[:2000]))
+            else:
+                results.append(raw)
 
         for ticker, strategy, error in results:
             state = ticker_states[ticker]
@@ -115,48 +165,63 @@ class BootstrapService:
                 state.currentStep = None
                 state.strategy = strategy
                 job.completedTickers.append(ticker)
-                store.upsert_strategy(
-                    payload.userId,
-                    ticker,
-                    strategy,
-                    guidance_applied=ticker in payload.guidance,
-                )
-                store.upsert_report_artifact(
-                    payload.userId,
-                    ticker,
-                    "strategy",
-                    {
-                        "ticker": ticker,
-                        "verdict": strategy.verdict,
-                        "confidence": strategy.confidence,
-                        "reasoning": strategy.reasoning,
-                        "timeframe": strategy.timeframe,
-                        "entryConditions": [],
-                        "exitConditions": strategy.invalidation_conditions[:5],
-                        "catalysts": [c.model_dump() for c in strategy.catalysts],
-                        "bullCase": strategy.bull_case,
-                        "bearCase": strategy.bear_case,
-                        "updatedAt": utc_now(),
-                    },
-                )
-                for name in ("fundamentals", "sentiment", "risk", "debate", "bull_case", "bear_case"):
-                    artifact = strategy.analyst_reports.get(name)
-                    if artifact:
-                        store.upsert_report_artifact(payload.userId, ticker, name, artifact)
+                try:
+                    store.upsert_strategy(
+                        payload.userId,
+                        ticker,
+                        strategy,
+                        guidance_applied=ticker in payload.guidance,
+                    )
+                    store.upsert_report_artifact(
+                        payload.userId,
+                        ticker,
+                        "strategy",
+                        {
+                            "ticker": ticker,
+                            "verdict": strategy.verdict,
+                            "confidence": strategy.confidence,
+                            "reasoning": strategy.reasoning,
+                            "timeframe": strategy.timeframe,
+                            "entryConditions": [],
+                            "exitConditions": strategy.invalidation_conditions[:5],
+                            "catalysts": [c.model_dump() for c in strategy.catalysts],
+                            "bullCase": strategy.bull_case,
+                            "bearCase": strategy.bear_case,
+                            "updatedAt": utc_now(),
+                        },
+                    )
+                    for name in ("fundamentals", "sentiment", "risk", "debate", "bull_case", "bear_case"):
+                        artifact = strategy.analyst_reports.get(name)
+                        if artifact:
+                            store.upsert_report_artifact(payload.userId, ticker, name, artifact)
+                except Exception:
+                    logger.exception("Failed to persist strategy artifacts for ticker %s", ticker)
             else:
                 state.status = "failed"
                 state.currentStep = None
                 state.failureReason = error
                 job.failedTickers.append(ticker)
             self._refresh_progress(job)
-            store.save_bootstrap_job(job)
-            store.save_bootstrap_progress(payload.userId, job.totalTickers, job.completedTickers)
+            try:
+                store.save_bootstrap_job(job)
+                store.save_bootstrap_progress(payload.userId, job.totalTickers, job.completedTickers)
+            except Exception:
+                logger.exception("Failed to save bootstrap progress after ticker %s", ticker)
 
         if job.failedTickers and job.completedTickers:
             job.status = "partial_completed"
+            failed_summary = "; ".join(
+                f"{t}: {ticker_states[t].failureReason or 'unknown'}"
+                for t in job.failedTickers
+            )
+            job.error = failed_summary[:2000]
         elif job.failedTickers:
             job.status = "failed"
-            job.error = "All tickers failed." if len(job.failedTickers) == job.totalTickers else None
+            failed_summary = "; ".join(
+                f"{t}: {ticker_states[t].failureReason or 'unknown'}"
+                for t in job.failedTickers
+            )
+            job.error = failed_summary[:2000]
         else:
             job.status = "completed"
 
@@ -164,8 +229,14 @@ class BootstrapService:
         job.currentStep = None
         job.completedAt = utc_now()
         self._refresh_progress(job)
-        store.save_bootstrap_job(job)
-        store.finish_bootstrap(payload.userId, job.completedTickers, job.failedTickers)
+        try:
+            store.save_bootstrap_job(job)
+        except Exception:
+            logger.exception("Failed to save final bootstrap job status for %s", job.jobId)
+        try:
+            store.finish_bootstrap(payload.userId, job.completedTickers, job.failedTickers)
+        except Exception:
+            logger.exception("Failed to call finish_bootstrap for job %s", job.jobId)
 
     @staticmethod
     def _position_lookup(accounts: dict) -> dict:

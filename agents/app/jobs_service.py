@@ -132,19 +132,36 @@ class JobsService:
             tickers = await asyncio.to_thread(_prepare)
         except (PointsBudgetExceededError, ValueError, FileNotFoundError) as exc:
             job.status = "failed"
-            job.error = str(exc)
+            job.error = str(exc)[:2000]
             job.completed_at = utc_now()
             self._update_progress(job, [], {}, None, None)
             try:
                 await asyncio.to_thread(store.create_job_from_record, job)
             except Exception:
-                pass
+                logger.exception("Failed to persist failed job %s after validation error", job.id)
+            return
+        except Exception as exc:
+            logger.exception("Unexpected error during job preparation for %s", job.id)
+            job.status = "failed"
+            job.error = str(exc)[:2000]
+            job.completed_at = utc_now()
+            self._update_progress(job, [], {}, None, None)
+            try:
+                await asyncio.to_thread(store.create_job_from_record, job)
+            except Exception:
+                logger.exception("Failed to persist failed job %s after unexpected preparation error", job.id)
             return
 
         # Hydrate the job with resolved tickers and write it to DB.
         job.tickers = tickers
         self._update_progress(job, [], {}, payload.ticker, "queued")
-        await asyncio.to_thread(store.create_job_from_record, job)
+        try:
+            await asyncio.to_thread(store.create_job_from_record, job)
+        except Exception:
+            logger.exception("Failed to persist job %s to DB before running; aborting", job.id)
+            job.status = "failed"
+            job.error = "Internal error: failed to save job record before execution."
+            return
 
         await self._run_job(job)
 
@@ -159,11 +176,26 @@ class JobsService:
                 store.list_report_summaries(user_id, limit=5),
             )
 
-        lookup, guidance, reports = await asyncio.to_thread(_load_context)
+        try:
+            lookup, guidance, reports = await asyncio.to_thread(_load_context)
+        except Exception as exc:
+            logger.exception("Failed to load context for job %s", job.id)
+            job.status = "failed"
+            job.error = f"Failed to load portfolio context: {str(exc)[:2000]}"
+            job.completed_at = utc_now()
+            self._update_progress(job, [], {}, None, None)
+            try:
+                await asyncio.to_thread(store.write_job, job)
+            except Exception:
+                logger.exception("Failed to persist failed status for job %s", job.id)
+            return
 
         job.status = "running"
         job.started_at = utc_now()
-        await asyncio.to_thread(store.write_job, job)
+        try:
+            await asyncio.to_thread(store.write_job, job)
+        except Exception:
+            logger.exception("Failed to write running status for job %s", job.id)
 
         completed: list[str] = []
         failures: dict[str, str] = {}
@@ -176,25 +208,64 @@ class JobsService:
                 if ticker not in lookup:
                     return ticker, None, "Ticker not found in portfolio."
                 try:
-                    strategy = await _invoke_with_retry(
-                        self.settings,
-                        action=job.action,
-                        ticker=ticker,
-                        position_context=lookup[ticker],
-                        guidance=self._guidance_model(guidance.get(ticker)),
-                        current_strategy=store.load_strategy(user_id, ticker),
-                        recent_reports=[r for r in reports if r.get("ticker") == ticker],
+                    # Load current strategy off the event loop (blocking psycopg call).
+                    current_strategy = await asyncio.to_thread(store.load_strategy, user_id, ticker)
+                    strategy = await asyncio.wait_for(
+                        _invoke_with_retry(
+                            self.settings,
+                            action=job.action,
+                            ticker=ticker,
+                            position_context=lookup[ticker],
+                            guidance=self._guidance_model(guidance.get(ticker)),
+                            current_strategy=current_strategy,
+                            recent_reports=[r for r in reports if r.get("ticker") == ticker],
+                        ),
+                        timeout=self.settings.ticker_timeout_seconds,
                     )
                     return ticker, strategy, None
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Ticker %s timed out after %ds in job %s",
+                        ticker, self.settings.ticker_timeout_seconds, job.id,
+                    )
+                    return ticker, None, f"Analysis timed out after {self.settings.ticker_timeout_seconds}s"
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    return ticker, None, str(exc)
+                    logger.exception("Ticker %s failed in job %s", ticker, job.id)
+                    return ticker, None, str(exc)[:2000]
 
         self._update_progress(job, completed, failures, None, "analysis")
-        await asyncio.to_thread(store.write_job, job)
+        try:
+            await asyncio.to_thread(store.write_job, job)
+        except Exception:
+            logger.exception("Failed to write analysis-start status for job %s", job.id)
 
-        results = await asyncio.gather(*(_run_ticker(t) for t in job.tickers))
+        try:
+            raw_results = await asyncio.gather(
+                *(_run_ticker(t) for t in job.tickers),
+                return_exceptions=True,
+            )
+        except Exception as exc:
+            logger.exception("asyncio.gather failed for job %s", job.id)
+            job.status = "failed"
+            job.error = f"Job execution failed: {str(exc)[:2000]}"
+            job.completed_at = utc_now()
+            self._update_progress(job, [], {}, None, None)
+            try:
+                await asyncio.to_thread(store.write_job, job)
+            except Exception:
+                logger.exception("Failed to persist failed status for job %s", job.id)
+            return
+
+        # Normalise results — return_exceptions=True means some entries may be BaseException.
+        results: list[tuple[str, TickerStrategyDraft | None, str | None]] = []
+        for ticker, raw in zip(job.tickers, raw_results):
+            if isinstance(raw, BaseException):
+                logger.exception("Ticker %s raised unexpectedly in job %s: %s", ticker, job.id, raw)
+                results.append((ticker, None, str(raw)[:2000]))
+            else:
+                results.append(raw)
 
         def _save_results() -> None:
             for ticker, strategy, error in results:
@@ -206,7 +277,19 @@ class JobsService:
                 else:
                     failures[ticker] = error or "Unknown error"
 
-        await asyncio.to_thread(_save_results)
+        try:
+            await asyncio.to_thread(_save_results)
+        except Exception as exc:
+            logger.exception("Failed to save results for job %s", job.id)
+            job.status = "failed"
+            job.error = f"Failed to save results: {str(exc)[:2000]}"
+            job.completed_at = utc_now()
+            self._update_progress(job, completed, failures, None, None)
+            try:
+                await asyncio.to_thread(store.write_job, job)
+            except Exception:
+                logger.exception("Failed to persist failed status for job %s after save error", job.id)
+            return
 
         job.completed_at = utc_now()
         job.status = (
@@ -214,17 +297,24 @@ class JobsService:
             else "failed" if failures
             else "completed"
         )
-        job.error = "; ".join(f"{t}: {r}" for t, r in failures.items()) or None
+        error_parts = "; ".join(f"{t}: {r}" for t, r in failures.items())
+        job.error = error_parts[:2000] if error_parts else None
         job.result = {
             "strategies": [s.model_dump() for s in strategies],
             "completedTickers": completed,
             "failedTickers": list(failures.keys()),
         }
-        batch = store.build_job_batch(job, strategies, completed)
-        if batch:
-            job.result["batch"] = batch
+        try:
+            batch = store.build_job_batch(job, strategies, completed)
+            if batch:
+                job.result["batch"] = batch
+        except Exception:
+            logger.exception("Failed to build batch for job %s (non-fatal)", job.id)
         self._update_progress(job, completed, failures, None, None)
-        await asyncio.to_thread(store.write_job, job)
+        try:
+            await asyncio.to_thread(store.write_job, job)
+        except Exception:
+            logger.exception("Failed to write final status for job %s", job.id)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

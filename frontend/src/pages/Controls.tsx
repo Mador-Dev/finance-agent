@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, XCircle } from "lucide-react";
 import { triggerJob, fetchJobs } from "../api/jobs";
@@ -34,11 +34,11 @@ function ActionCard({
   const language = usePreferencesStore((s) => s.language);
   const queryClient = useQueryClient();
   const [tickerSelection, setTickerSelection] = useState<TickerSelection | null>(null);
-  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const showToast = useToastStore((s) => s.show);
 
   const handleTrigger = async () => {
-    if (submittingRef.current) return;
+    if (submitting) return;
     if (blocked) {
       showToast(blockedReason ?? "This feature is currently blocked.", "info");
       return;
@@ -47,7 +47,7 @@ function ActionCard({
       showToast(t("tickerRequired", language), "warning");
       return;
     }
-    submittingRef.current = true;
+    setSubmitting(true);
     try {
       const res = await triggerJob(action, tickerRequired ? tickerSelection?.symbol : undefined);
       void queryClient.invalidateQueries({ queryKey: ["balance"] });
@@ -59,7 +59,7 @@ function ActionCard({
       const reason = axiosErr.response?.data?.reason || axiosErr.response?.data?.error;
       showToast(reason || `${t("jobFailed", language)}: ${action}`, "error");
     } finally {
-      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -87,7 +87,7 @@ function ActionCard({
       ) : null}
       <button
         onClick={handleTrigger}
-        disabled={blocked || (tickerRequired && !tickerSelection)}
+        disabled={blocked || submitting || (tickerRequired && !tickerSelection)}
         className={`w-full py-2 rounded-lg text-xs font-bold disabled:opacity-50 mt-1 ${
           blocked
             ? "border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-subtle)]"
@@ -96,6 +96,14 @@ function ActionCard({
       >
         {blocked ? t("comingSoon", language) : t("run", language)}
       </button>
+      {submitting && (
+        <div className="w-full rounded-full overflow-hidden bg-[var(--color-border)]" style={{ height: 3 }}>
+          <div
+            className="h-full w-1/3 rounded-full bg-[var(--color-fg-default)]"
+            style={{ animation: "app-loader-slide 1.5s ease-in-out infinite" }}
+          />
+        </div>
+      )}
     </Card>
   );
 }
@@ -104,7 +112,6 @@ export function Controls() {
   const language = usePreferencesStore((s) => s.language);
   const queryClient = useQueryClient();
   const showToast = useToastStore((s) => s.show);
-
   const { data: jobsData } = useQuery({
     queryKey: ["jobs"],
     queryFn: fetchJobs,

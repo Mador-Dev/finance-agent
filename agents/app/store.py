@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from agents.app.db import execute, fetch_all, fetch_one
 from agents.app.schemas import (
@@ -612,6 +615,8 @@ def create_job(user_id: str, action: str, ticker: str | None, tickers: list[str]
         """
         INSERT INTO jobs (id, user_id, action, status, source, model_tier, triggered_at, result)
         VALUES (%s, %s, %s, 'pending', 'dashboard_action', 'balanced', NOW(), %s::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status, result = EXCLUDED.result
         """,
         (job_id, user_id, action, json.dumps(extra)),
     )
@@ -655,7 +660,7 @@ def list_jobs(user_id: str, limit: int = 50) -> JobsResponse:
         try:
             jobs.append(_row_to_job(r))
         except Exception:
-            pass
+            logger.exception("Failed to deserialize job row id=%s; skipping", r.get("id"))
     return JobsResponse(jobs=jobs)
 
 

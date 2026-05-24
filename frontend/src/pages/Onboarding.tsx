@@ -20,7 +20,6 @@ import {
 import { generateId } from "../utils/id";
 import { apiClient } from "../api/client";
 import { t } from "../store/i18n";
-
 const EXCHANGES = [
   { value: "NYSE", label: "NYSE", currency: "USD" },
   { value: "NASDAQ", label: "NASDAQ", currency: "USD" },
@@ -680,6 +679,7 @@ function StepGuidance({
   onSkip,
   onLaunch,
   launchError,
+  launching = false,
 }: {
   tickers: string[];
   guidance: Record<string, GuidanceDraft>;
@@ -688,6 +688,7 @@ function StepGuidance({
   onSkip: () => void;
   onLaunch: () => void;
   launchError: string;
+  launching?: boolean;
 }) {
   const language = usePreferencesStore((s) => s.language);
   return (
@@ -721,20 +722,31 @@ function StepGuidance({
           />
         ))}
       </div>
-      <div className="px-5 py-4 flex gap-3 border-t border-[var(--color-border)]">
-        <button onClick={onBack} className="flex-1 py-3 rounded-lg border border-[var(--color-border)] text-sm font-bold text-[var(--color-fg-muted)]">
+      <div className="px-5 pt-4 pb-2 flex gap-3 border-t border-[var(--color-border)]">
+        <button onClick={onBack} disabled={launching} className="flex-1 py-3 rounded-lg border border-[var(--color-border)] text-sm font-bold text-[var(--color-fg-muted)] disabled:opacity-50">
           {t("back", language)}
         </button>
-        <button onClick={onSkip} className="flex-1 py-3 rounded-lg border border-[var(--color-border)] text-sm font-bold text-[var(--color-fg-muted)]">
+        <button onClick={onSkip} disabled={launching} className="flex-1 py-3 rounded-lg border border-[var(--color-border)] text-sm font-bold text-[var(--color-fg-muted)] disabled:opacity-50">
           {t("onboardSkip", language)}
         </button>
         <button
           onClick={onLaunch}
-          className="flex-1 py-3 rounded-xl border border-black/10 bg-[var(--color-primary)] text-[var(--color-primary-fg)] text-sm font-bold shadow-[0_4px_0_rgba(17,24,39,0.12)] transition-transform hover:-translate-y-0.5"
+          disabled={launching}
+          className="flex-1 py-3 rounded-xl border border-black/10 bg-[var(--color-primary)] text-[var(--color-primary-fg)] text-sm font-bold shadow-[0_4px_0_rgba(17,24,39,0.12)] transition-transform hover:-translate-y-0.5 disabled:opacity-50"
         >
-          {t("onboardLaunchBtn", language)}
+          {launching ? t("onboardLaunching", language) : t("onboardLaunchBtn", language)}
         </button>
       </div>
+      {launching && (
+        <div className="px-5 pb-4">
+          <div className="w-full rounded-full overflow-hidden bg-[var(--color-border)]" style={{ height: 3 }}>
+            <div
+              className="h-full w-1/3 rounded-full bg-[var(--color-fg-default)]"
+              style={{ animation: "app-loader-slide 1.5s ease-in-out infinite" }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -760,6 +772,7 @@ export function Onboarding() {
   const [submittingPortfolio, setSubmittingPortfolio] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const launchingGuidanceRef = useRef(false);
+  const [launchingBootstrap, setLaunchingBootstrap] = useState(false);
   const [launchError, setLaunchError] = useState("");
 
   // On mount: check if backend workspace exists to determine new-user vs returning-user flow
@@ -864,6 +877,7 @@ export function Onboarding() {
     }
 
     launchingGuidanceRef.current = true;
+    setLaunchingBootstrap(true);
     setLaunchError("");
     try {
       const guidancePayload = skip ? {} : buildGuidancePayload();
@@ -898,6 +912,7 @@ export function Onboarding() {
       setLaunchError(msg);
     } finally {
       launchingGuidanceRef.current = false;
+      setLaunchingBootstrap(false);
     }
   };
 
@@ -1069,6 +1084,16 @@ export function Onboarding() {
               nextDisabled={submittingPortfolio}
               showBack={true}
             />
+            {submittingPortfolio && (
+              <div className="px-5 pb-4">
+                <div className="w-full rounded-full overflow-hidden bg-[var(--color-border)]" style={{ height: 3 }}>
+                  <div
+                    className="h-full w-1/3 rounded-full bg-[var(--color-fg-default)]"
+                    style={{ animation: "app-loader-slide 1.5s ease-in-out infinite" }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1082,6 +1107,7 @@ export function Onboarding() {
             onSkip={() => void completeGuidanceAndLaunch(true)}
             onLaunch={() => void completeGuidanceAndLaunch(false)}
             launchError={launchError}
+            launching={launchingBootstrap}
           />
         )}
         </div>

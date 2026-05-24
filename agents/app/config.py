@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="changeme", alias="JWT_SECRET")
     bootstrap_max_concurrency: int = Field(default=3, alias="BOOTSTRAP_MAX_CONCURRENCY")
     bootstrap_include_bull_bear: bool = Field(default=True, alias="BOOTSTRAP_INCLUDE_BULL_BEAR")
+    # Per-ticker agent timeout in seconds. Guards against agents that hang
+    # waiting for an API response or running too many subagent steps.
+    ticker_timeout_seconds: int = Field(default=180, alias="TICKER_TIMEOUT_SECONDS")
 
 
 @lru_cache(maxsize=1)

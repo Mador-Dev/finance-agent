@@ -1,147 +1,95 @@
+"""Bootstrap agent — coordinator with specialist subagents."""
 from __future__ import annotations
 
-import asyncio
+import logging
 from functools import cache
 from typing import Any
 
 from deepagents import create_deep_agent
+from langchain.chat_models import init_chat_model
 
 from agents.app.config import Settings
 from agents.app.schemas import PositionGuidanceInput, TickerStrategyDraft, utc_now
 from agents.bootstrap_agent.prompts import (
-    BEAR_SUBAGENT_PROMPT,
-    BULL_SUBAGENT_PROMPT,
-    COORDINATOR_PROMPT,
-    CRITIC_SUBAGENT_PROMPT,
-    FUNDAMENTALS_SUBAGENT_PROMPT,
-    RISK_SUBAGENT_PROMPT,
-    SENTIMENT_SUBAGENT_PROMPT,
+    BEAR_SUBAGENT_PROMPT, BULL_SUBAGENT_PROMPT, COORDINATOR_PROMPT,
+    CRITIC_SUBAGENT_PROMPT, FUNDAMENTALS_SUBAGENT_PROMPT,
+    RISK_SUBAGENT_PROMPT, SENTIMENT_SUBAGENT_PROMPT,
 )
 from agents.bootstrap_agent.state import BootstrapResearchInput
 from agents.bootstrap_agent.tools import get_guidance, get_research_packet
 
+logger = logging.getLogger(__name__)
 
 BASE_LIMITATIONS = [
-    "Bootstrap v1 uses shared workspace state and lightweight built-in context.",
-    "For stronger research, connect deterministic market/news/fundamental data sources here.",
+    "Bootstrap v1 uses lightweight built-in context without live market data.",
+    "For stronger research, connect deterministic market/news/fundamental data sources.",
 ]
 
-_BOOTSTRAP_TOOLS = [get_research_packet, get_guidance]
-
-_BASE_SUBAGENT_SPECS = [
-    ("analyst_fundamentals", "Analyze business quality, growth durability, and thesis-critical fundamentals.", FUNDAMENTALS_SUBAGENT_PROMPT),
-    ("analyst_sentiment", "Analyze narrative shifts, recent perception changes, and concrete catalysts.", SENTIMENT_SUBAGENT_PROMPT),
-    ("analyst_risk", "Analyze downside drivers, key risks, and invalidation conditions.", RISK_SUBAGENT_PROMPT),
-    ("critic", "Find flaws, unsupported claims, and missing evidence in the draft strategy.", CRITIC_SUBAGENT_PROMPT),
-]
-
-_BULL_BEAR_SPECS = [
-    ("bull_case", "Argue the strongest case for owning or adding the ticker.", BULL_SUBAGENT_PROMPT),
-    ("bear_case", "Argue the strongest case against owning or adding the ticker.", BEAR_SUBAGENT_PROMPT),
-]
-
-
-def _subagent_dict(name: str, description: str, system_prompt: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "description": description,
-        "system_prompt": system_prompt,
-        "tools": _BOOTSTRAP_TOOLS,
-    }
+_TOOLS = [get_research_packet, get_guidance]
 
 
 @cache
 def _build_agent(model: str, include_bull_bear: bool) -> Any:
-    """Compile a reusable bootstrap deep agent.
+    """Compile and cache the bootstrap graph. Built once per (model, include_bull_bear) pair."""
+    # deepagents defaults to the OpenAI Responses API for `openai:` models, which
+    # conflicts with tool-based structured output (response_format). Use Chat
+    # Completions instead for reliable structured output.
+    resolved_model = (
+        init_chat_model(model, use_responses_api=False)
+        if model.startswith("openai:")
+        else model
+    )
 
-    Built once per (model, include_bull_bear) and cached for the process lifetime.
-    The research packet and guidance are injected at invoke time via RunnableConfig.
-    """
-    specs = _BASE_SUBAGENT_SPECS + (_BULL_BEAR_SPECS if include_bull_bear else [])
-    subagents = [_subagent_dict(name, desc, prompt) for name, desc, prompt in specs]
+    subagents = [
+        {
+            "name": "fundamentals",
+            "description": "Analyses business quality, growth durability, and key valuation drivers.",
+            "system_prompt": FUNDAMENTALS_SUBAGENT_PROMPT,
+            "tools": _TOOLS,
+        },
+        {
+            "name": "sentiment",
+            "description": "Analyses market narrative and near-term catalysts to monitor.",
+            "system_prompt": SENTIMENT_SUBAGENT_PROMPT,
+            "tools": _TOOLS,
+        },
+        {
+            "name": "risk",
+            "description": "Analyses thesis failure modes and invalidation conditions.",
+            "system_prompt": RISK_SUBAGENT_PROMPT,
+            "tools": _TOOLS,
+        },
+        {
+            "name": "critic",
+            "description": "Stress-tests the emerging strategy before it becomes the user's foundation.",
+            "system_prompt": CRITIC_SUBAGENT_PROMPT,
+            "tools": _TOOLS,
+        },
+    ]
+
+    if include_bull_bear:
+        subagents += [
+            {
+                "name": "bull_case",
+                "description": "Argues the strongest evidence-based case for holding the position.",
+                "system_prompt": BULL_SUBAGENT_PROMPT,
+                "tools": _TOOLS,
+            },
+            {
+                "name": "bear_case",
+                "description": "Argues the strongest evidence-based case against holding the position.",
+                "system_prompt": BEAR_SUBAGENT_PROMPT,
+                "tools": _TOOLS,
+            },
+        ]
+
     return create_deep_agent(
-        model=model,
+        model=resolved_model,
         system_prompt=COORDINATOR_PROMPT,
-        tools=_BOOTSTRAP_TOOLS,
+        tools=_TOOLS,
         subagents=subagents,
         response_format=TickerStrategyDraft,
     )
-
-
-def build_bootstrap_research_input(
-    ticker: str,
-    position_context: dict[str, Any],
-    guidance: PositionGuidanceInput | None,
-) -> BootstrapResearchInput:
-    return BootstrapResearchInput(
-        ticker=ticker,
-        position=position_context,
-        guidance=guidance.model_dump() if guidance else None,
-        generatedAt=utc_now(),
-        limitations=BASE_LIMITATIONS,
-    )
-
-
-def _strategy_from_result(result: Any, *, ticker: str) -> TickerStrategyDraft:
-    if not isinstance(result, dict):
-        raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
-    structured = result.get("structured_response")
-    if isinstance(structured, TickerStrategyDraft):
-        return structured
-    if isinstance(structured, dict):
-        normalized = dict(structured)
-        reasoning = normalized.get("reasoning")
-        if not isinstance(reasoning, str) or not reasoning.strip():
-            parts: list[str] = []
-            thesis = normalized.get("thesis")
-            if isinstance(thesis, str) and thesis.strip():
-                parts.append(thesis.strip())
-            bull_case = normalized.get("bull_case")
-            if isinstance(bull_case, str) and bull_case.strip():
-                parts.append(f"Bull case: {bull_case.strip()}")
-            bear_case = normalized.get("bear_case")
-            if isinstance(bear_case, str) and bear_case.strip():
-                parts.append(f"Bear case: {bear_case.strip()}")
-            evidence_summary = normalized.get("evidence_summary")
-            if isinstance(evidence_summary, dict):
-                supporting = evidence_summary.get("supporting")
-                if isinstance(supporting, list):
-                    snippets = [item.strip() for item in supporting if isinstance(item, str) and item.strip()]
-                    if snippets:
-                        parts.append("Supporting evidence: " + "; ".join(snippets[:3]))
-            normalized["reasoning"] = " ".join(parts).strip() or f"Initial bootstrap strategy for {ticker}."
-        return TickerStrategyDraft.model_validate(normalized)
-    raise ValueError(f"Deep agent returned no structured strategy for {ticker}")
-
-
-def _invoke_agent_sync(
-    model: str,
-    include_bull_bear: bool,
-    ticker: str,
-    research_packet: BootstrapResearchInput,
-) -> TickerStrategyDraft:
-    agent = _build_agent(model, include_bull_bear)
-    prompt = (
-        f"Build the initial portfolio strategy for ticker {ticker}.\n\n"
-        "Call get_research_packet to read the full research context. "
-        "Run the relevant specialist subagents, challenge weak assumptions, "
-        "and synthesize a final ticker strategy."
-    )
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": prompt}]},
-        config={
-            "configurable": {
-                "research_packet": dict(research_packet),
-                "guidance": research_packet.get("guidance") or {},
-            }
-        },
-    )
-    return _strategy_from_result(result, ticker=ticker)
-
-
-# Kept for backward-compat with langgraph.json entrypoint.
-def build_bootstrap_deep_agent(settings: Settings, *, research_packet: BootstrapResearchInput) -> Any:
-    return _build_agent(settings.deep_agent_model, settings.bootstrap_include_bull_bear)
 
 
 async def invoke_bootstrap_agent(
@@ -149,15 +97,44 @@ async def invoke_bootstrap_agent(
     *,
     ticker: str,
     position_context: dict[str, Any],
-    guidance: PositionGuidanceInput | None,
+    guidance: PositionGuidanceInput | None = None,
 ) -> TickerStrategyDraft:
+    """Run the bootstrap agent for one ticker and return a TickerStrategyDraft."""
     if not settings.openai_api_key:
         raise ValueError("OPENAI_API_KEY is required")
-    research_packet = build_bootstrap_research_input(ticker, position_context, guidance)
-    return await asyncio.to_thread(
-        _invoke_agent_sync,
-        settings.deep_agent_model,
-        settings.bootstrap_include_bull_bear,
-        ticker,
-        research_packet,
+
+    research_packet = BootstrapResearchInput(
+        ticker=ticker,
+        position=position_context,
+        guidance=guidance.model_dump() if guidance else None,
+        generatedAt=utc_now(),
+        limitations=BASE_LIMITATIONS,
     )
+
+    result = await _build_agent(settings.deep_agent_model, settings.bootstrap_include_bull_bear).ainvoke(
+        {
+            "messages": [{
+                "role": "user",
+                "content": (
+                    f"Bootstrap the initial investment strategy for {ticker}.\n\n"
+                    "Call get_research_packet for position data and "
+                    "get_guidance for user preferences."
+                ),
+            }],
+        },
+        config={
+            "configurable": {
+                "research_packet": dict(research_packet),
+                "guidance": research_packet.get("guidance") or {},
+            },
+        },
+    )
+
+    # ainvoke returns the graph state dict; structured output lives in "structured_response".
+    strategy = result.get("structured_response")
+    if not isinstance(strategy, TickerStrategyDraft):
+        raise ValueError(
+            f"Bootstrap agent did not produce a valid strategy for {ticker}. "
+            f"Got: {type(strategy).__name__}"
+        )
+    return strategy
