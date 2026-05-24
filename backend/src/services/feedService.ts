@@ -203,7 +203,7 @@ async function listReportBatches(userId: string, limit = MAX_STORED_EVENTS): Pro
        FROM jobs
       WHERE user_id = $1
         AND status IN ('completed', 'partial_completed')
-        AND action IN ('daily_brief', 'full_report', 'deep_dive', 'quick_check')
+        AND action IN ('daily_brief', 'full_report', 'deep_dive', 'quick_check', 'bootstrap')
       ORDER BY COALESCE(completed_at, triggered_at) DESC
       LIMIT $2`,
     [userId, limit]
