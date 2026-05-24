@@ -1360,7 +1360,7 @@ function ReportCard({
           {/* Mode + date row */}
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] text-[var(--color-fg-subtle)]">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]">
                 {meta.icon}
               </div>
               <div className="min-w-0">
@@ -1404,9 +1404,11 @@ function ReportCard({
             ) : null}
           </div>
 
-          <p className="mt-2 text-xs text-[var(--color-fg-subtle)]">
-            Coverage: {summaryMetrics[0]?.value}
-          </p>
+          {isBriefMode ? (
+            <p className="mt-1.5 text-[11px] font-medium text-[var(--color-fg-subtle)]">
+              {summaryMetrics[0]?.value}
+            </p>
+          ) : null}
 
           {/* Escalation alert — non-interactive colored tags for brief modes */}
           {false ? (
@@ -1483,10 +1485,16 @@ function ReportCard({
             <p className="mt-2 text-sm leading-6 text-[var(--color-fg-subtle)]">{item.dailyBrief.marketView}</p>
           ) : null}
 
-          <div className="mt-3">
-            <span className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-base)] px-4 text-sm font-medium text-[var(--color-fg-default)] shadow-sm">
-              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              {expanded ? "Hide report" : "Open report"}
+          <div className="mt-4 flex items-center justify-between border-t border-[var(--color-border)]/50 pt-3">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[11px] font-semibold tracking-wide transition-all ${
+                expanded
+                  ? "border-[var(--color-border)] bg-transparent text-[var(--color-fg-muted)]"
+                  : "border-[var(--color-accent-blue)]/40 bg-[var(--color-accent-blue)]/10 text-[var(--color-accent-blue)]"
+              }`}
+            >
+              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {expanded ? "Collapse" : "View report"}
             </span>
           </div>
 
@@ -1644,17 +1652,17 @@ function ReportCard({
           {visibleTabs.length > 0 ? (
             <div className="px-5 pt-4">
               {/* Tab bar */}
-              <div className="relative -mx-5 overflow-x-auto">
-                <div className="flex border-b border-[var(--color-border)] px-5 overflow-x-auto">
+              <div className="-mx-5 overflow-x-auto">
+                <div className="flex min-w-max border-b border-[var(--color-border)] px-5">
                   {visibleTabs.map((tabType) => (
                     <button
                       key={tabType}
                       type="button"
                       onClick={() => onTabChange(tabType)}
-                      className={`mr-6 shrink-0 border-b-2 pb-3 pt-1 text-sm font-medium transition-colors ${
+                      className={`mr-5 shrink-0 border-b-2 pb-3 pt-1 text-xs font-semibold tracking-wide transition-colors ${
                         activeTab === tabType
                           ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
-                          : "border-transparent text-[var(--color-fg-muted)]"
+                          : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                       }`}
                     >
                       {TAB_LABELS[tabType]}
@@ -1828,7 +1836,7 @@ export function Reports() {
                 setPage(1);
               }}
               placeholder="Search ticker, verdict, reasoning…"
-              className="w-full bg-[var(--color-bg-muted)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-fg-default)] outline-none focus:border-[var(--color-accent-blue)] placeholder:text-[var(--color-fg-subtle)]"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3.5 py-2.5 text-sm text-[var(--color-fg-default)] outline-none transition-colors focus:border-[var(--color-accent-blue)] placeholder:text-[var(--color-fg-subtle)]"
             />
 
           <div className="flex gap-2 overflow-x-auto pb-0.5">
@@ -1840,10 +1848,10 @@ export function Reports() {
                   setFilter(f.id);
                   setPage(1);
                 }}
-                className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold transition-colors ${
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${
                   filter === f.id
-                    ? "bg-[var(--color-accent-blue)] text-white"
-                    : "bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)] border border-[var(--color-border)]"
+                    ? "bg-[var(--color-accent-blue)] text-white shadow-sm"
+                    : "border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                 }`}
               >
                 {f.label}

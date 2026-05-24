@@ -36,16 +36,20 @@ class JobsService:
 
     async def trigger(self, user_id: str, payload: TriggerJobRequest) -> JobRecord:
         self._loop = asyncio.get_running_loop()
-        tickers = self._resolve_tickers(user_id, payload.action, payload.ticker)
-        charge = self._charge_for_action(payload.action, len(tickers))
-        require_points(
-            user_id,
-            charge,
-            source="agents",
-            action=payload.action,
-            note=f"Triggered {payload.action} for {len(tickers)} ticker(s)",
-        )
-        job = store.create_job(user_id, payload.action, payload.ticker, tickers)
+
+        def _prepare() -> JobRecord:
+            tickers = self._resolve_tickers(user_id, payload.action, payload.ticker)
+            charge = self._charge_for_action(payload.action, len(tickers))
+            require_points(
+                user_id,
+                charge,
+                source="agents",
+                action=payload.action,
+                note=f"Triggered {payload.action} for {len(tickers)} ticker(s)",
+            )
+            return store.create_job(user_id, payload.action, payload.ticker, tickers)
+
+        job = await asyncio.to_thread(_prepare)
         self._tasks[job.id] = asyncio.create_task(self._run_job(job))
         return job
 

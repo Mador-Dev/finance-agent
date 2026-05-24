@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchStrategies } from "../api/strategies";
 import { triggerJob } from "../api/jobs";
@@ -111,14 +112,17 @@ function ActionsDropdown({
         type="button"
         onClick={() => setOpen((current) => !current)}
         disabled={!hasEnabledItems}
-        className="inline-flex h-8 min-w-[104px] items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-base)] px-2.5 text-sm font-medium text-[var(--color-fg-default)] shadow-sm transition-colors hover:bg-[var(--color-bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-9 min-w-[110px] items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 text-sm font-medium text-[var(--color-fg-default)] shadow-sm transition-colors hover:bg-[var(--color-bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
       >
         <span>{label}</span>
-        <span className={`text-xs text-[var(--color-fg-subtle)] transition-transform ${open ? "rotate-180" : ""}`}>⌄</span>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 text-[var(--color-fg-subtle)] transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
       </button>
       {open ? (
-        <div className="absolute right-0 top-full z-30 mt-2 w-[220px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.18)]">
-          <div className="px-2.5 py-1.5 text-xs font-medium text-[var(--color-fg-subtle)]">
+        <div className="absolute right-0 top-full z-30 mt-2 w-[240px] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-base)] p-1.5 shadow-[0_20px_48px_rgba(15,23,42,0.22)]">
+          <div className="px-3 pb-1.5 pt-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-fg-subtle)]">
             Analysis actions
           </div>
           {items.map((item) => {
@@ -133,14 +137,18 @@ function ActionsDropdown({
                   setOpen(false);
                   onSelect(item);
                 }}
-                className="flex w-full items-start justify-between gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--color-bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-start justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-[var(--color-fg-default)]">{item.label}</span>
                   <span className="mt-0.5 block text-xs leading-5 text-[var(--color-fg-subtle)]">{item.helper}</span>
                 </span>
-                <span className="shrink-0 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-fg-subtle)]">
-                  {busy ? "Queued" : "Open"}
+                <span className={`mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                  busy
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-400"
+                    : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-subtle)]"
+                }`}>
+                  {busy ? "Queued" : "Run"}
                 </span>
               </button>
             );
@@ -293,10 +301,10 @@ export function Strategies() {
               <button
                 key={nextScope}
                 onClick={() => setScope(nextScope)}
-                className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
                   scope === nextScope
                     ? "bg-[var(--color-bg-base)] text-[var(--color-fg-default)] shadow-sm"
-                    : "text-[var(--color-fg-muted)]"
+                    : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                 }`}
               >
                 {label}
@@ -310,17 +318,17 @@ export function Strategies() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t("searchTicker", language)}
-              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2 text-sm text-[var(--color-fg-default)] outline-none focus:border-[var(--color-accent-blue)]"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3.5 py-2.5 text-sm text-[var(--color-fg-default)] outline-none transition-colors focus:border-[var(--color-accent-blue)] placeholder:text-[var(--color-fg-subtle)]"
             />
             <div className="flex flex-wrap gap-1.5">
               {VERDICT_FILTER_OPTIONS.map((opt) => (
                 <button
                   key={opt}
                   onClick={() => setVerdictFilter(opt)}
-                  className={`inline-flex h-9 w-[72px] items-center justify-center rounded-md border text-xs font-medium transition-colors ${
+                  className={`inline-flex h-8 min-w-[58px] items-center justify-center rounded-full border px-3 text-xs font-semibold transition-all ${
                     verdictFilter === opt
-                      ? "border-[var(--color-accent-blue)] bg-[var(--color-accent-blue)] text-white"
-                      : "border-[var(--color-border)] bg-[var(--color-bg-base)] text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
+                      ? "border-[var(--color-accent-blue)] bg-[var(--color-accent-blue)] text-white shadow-sm"
+                      : "border-[var(--color-border)] bg-[var(--color-bg-base)] text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg-default)]"
                   }`}
                 >
                   {opt}
@@ -369,15 +377,15 @@ export function Strategies() {
                   <article
                     key={strategy.ticker}
                     onClick={() => setSelectedTicker(strategy.ticker)}
-                    className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4"
+                    className="cursor-pointer rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 transition-colors hover:bg-[var(--color-bg-muted)]/40"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-medium text-[var(--color-fg-default)]">{strategy.ticker}</span>
+                          <span className="font-mono text-sm font-semibold text-[var(--color-fg-default)]">{strategy.ticker}</span>
                           <VerdictBadge verdict={strategy.verdict} size="sm" />
                         </div>
-                        <p className="mt-1 text-xs text-[var(--color-fg-subtle)]">
+                        <p className="mt-0.5 text-[11px] text-[var(--color-fg-subtle)]">
                           {timeAgo(strategy.updatedAt)}
                           {strategy.hasExpiredCatalysts ? " · expired catalyst" : ""}
                         </p>
@@ -405,22 +413,22 @@ export function Strategies() {
                       />
                     </div>
 
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-[var(--color-fg-muted)]">
-                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2">
-                        <p className="text-xs text-[var(--color-fg-subtle)]">Confidence</p>
-                        <p className="mt-1 font-medium text-[var(--color-fg-default)]">{tConfidence(strategy.confidence, language)}</p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Confidence</p>
+                        <p className="mt-1 text-sm font-semibold text-[var(--color-fg-default)]">{tConfidence(strategy.confidence, language)}</p>
                       </div>
-                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2">
-                        <p className="text-xs text-[var(--color-fg-subtle)]">Timeframe</p>
-                        <p className="mt-1 font-medium text-[var(--color-fg-default)]">{tTimeframe(strategy.timeframe, language)}</p>
+                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Timeframe</p>
+                        <p className="mt-1 text-sm font-semibold text-[var(--color-fg-default)]">{tTimeframe(strategy.timeframe, language)}</p>
                       </div>
-                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2">
-                        <p className="text-xs text-[var(--color-fg-subtle)]">Position size</p>
-                        <p className="mt-1 font-medium text-[var(--color-fg-default)]">{formatILS(strategy.positionSizeILS)}</p>
+                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Position size</p>
+                        <p className="mt-1 text-sm font-semibold tabular-nums text-[var(--color-fg-default)]">{formatILS(strategy.positionSizeILS)}</p>
                       </div>
-                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2">
-                        <p className="text-xs text-[var(--color-fg-subtle)]">Weight</p>
-                        <p className="mt-1 font-medium text-[var(--color-fg-default)]">{`${(strategy.positionWeightPct ?? 0).toFixed(1)}%`}</p>
+                      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
+                        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Weight</p>
+                        <p className="mt-1 text-sm font-semibold tabular-nums text-[var(--color-fg-default)]">{`${(strategy.positionWeightPct ?? 0).toFixed(1)}%`}</p>
                       </div>
                     </div>
 

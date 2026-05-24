@@ -22,40 +22,45 @@ class BootstrapService:
         self._tasks: dict[str, asyncio.Task] = {}
 
     async def start_bootstrap(self, payload: BootstrapStartRequest) -> BootstrapJobState:
-        existing = store.find_active_bootstrap_job(payload.userId)
-        if existing is not None:
-            return existing
-        ticker_count = len({
-            position.ticker
-            for positions in payload.accounts.values()
-            for position in positions
-        })
-        require_points(
-            payload.userId,
-            POINT_COSTS["bootstrap_per_ticker"] * max(1, ticker_count),
-            source="agents",
-            action="bootstrap",
-            note=f"Bootstrap started for {ticker_count} ticker(s)",
-        )
-        guidance_data = {ticker: g.model_dump() for ticker, g in payload.guidance.items()}
-        store.upsert_user(payload.userId, payload.displayName or payload.userId, payload.schedule.model_dump(), guidance_data)
-        store.upsert_portfolio(
-            payload.userId,
-            {
-                "meta": {
-                    "currency": payload.currency,
-                    "transactionFeeILS": payload.transactionFeeILS,
-                    "note": payload.note,
+        def _prepare() -> tuple[BootstrapJobState, bool]:
+            existing = store.find_active_bootstrap_job(payload.userId)
+            if existing is not None:
+                return existing, True
+            ticker_count = len({
+                position.ticker
+                for positions in payload.accounts.values()
+                for position in positions
+            })
+            require_points(
+                payload.userId,
+                POINT_COSTS["bootstrap_per_ticker"] * max(1, ticker_count),
+                source="agents",
+                action="bootstrap",
+                note=f"Bootstrap started for {ticker_count} ticker(s)",
+            )
+            guidance_data = {ticker: g.model_dump() for ticker, g in payload.guidance.items()}
+            store.upsert_user(payload.userId, payload.displayName or payload.userId, payload.schedule.model_dump(), guidance_data)
+            store.upsert_portfolio(
+                payload.userId,
+                {
+                    "meta": {
+                        "currency": payload.currency,
+                        "transactionFeeILS": payload.transactionFeeILS,
+                        "note": payload.note,
+                    },
+                    "accounts": {
+                        account: [pos.model_dump() for pos in positions]
+                        for account, positions in payload.accounts.items()
+                    },
                 },
-                "accounts": {
-                    account: [pos.model_dump() for pos in positions]
-                    for account, positions in payload.accounts.items()
-                },
-            },
-        )
-        job = store.create_bootstrap_job(payload.userId, payload)
-        store.save_bootstrap_progress(payload.userId, job.totalTickers, [])
-        self._tasks[job.jobId] = asyncio.create_task(self._run_job(payload, job))
+            )
+            job = store.create_bootstrap_job(payload.userId, payload)
+            store.save_bootstrap_progress(payload.userId, job.totalTickers, [])
+            return job, False
+
+        job, already_running = await asyncio.to_thread(_prepare)
+        if not already_running:
+            self._tasks[job.jobId] = asyncio.create_task(self._run_job(payload, job))
         return job
 
     def get_job(self, user_id: str, job_id: str) -> BootstrapJobState:
