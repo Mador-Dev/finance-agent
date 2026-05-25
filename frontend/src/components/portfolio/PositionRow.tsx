@@ -4,6 +4,61 @@ import { ActionBadge } from "../design/ActionBadge";
 import { positionSubLine } from "../../utils/today/positionSubLine";
 import type { PositionRow as PositionRowType, VerdictRow } from "../../types/api";
 
+/** Stock logo with a monogram fallback when the remote image fails to load. */
+function StockLogo({ ticker }: { ticker: string }) {
+  const [failed, setFailed] = useState(false);
+
+  // Derive a consistent hue from the ticker string so each fallback chip
+  // gets its own color without relying on a static palette.
+  const hue = ticker.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+
+  if (failed) {
+    return (
+      <span
+        aria-hidden
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 6,
+          background: `hsl(${hue} 55% 18%)`,
+          border: `1px solid hsl(${hue} 45% 30%)`,
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 9,
+          fontWeight: 700,
+          color: `hsl(${hue} 75% 75%)`,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          letterSpacing: "-0.03em",
+          userSelect: "none",
+        }}
+      >
+        {ticker.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={`https://assets.parqet.com/logos/symbol/${ticker}?format=svg`}
+      alt={ticker}
+      width={28}
+      height={28}
+      onError={() => setFailed(true)}
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 6,
+        objectFit: "contain",
+        background: "var(--bg-surface)",
+        border: "0.5px solid var(--bg-border)",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
 interface PositionRowProps {
   position: PositionRowType;
   verdict?: VerdictRow;
@@ -12,6 +67,8 @@ interface PositionRowProps {
   jobType?: "quick_check" | "deep_dive" | null;
   onQuickCheck?: () => void;
   onClick: () => void;
+  /** Suppress the top border — use on the first row inside a card container. */
+  noBorderTop?: boolean;
 }
 
 /**
@@ -32,6 +89,7 @@ export function PositionRow({
   jobType,
   onQuickCheck,
   onClick,
+  noBorderTop = false,
 }: PositionRowProps) {
   const [dragX, setDragX] = useState(0);
   const [swiping, setSwiping] = useState(false);
@@ -100,32 +158,16 @@ export function PositionRow({
           alignItems: "center",
           gap: 12,
           padding: "10px 16px",
-          borderTop: "0.5px solid var(--bg-border)",
+          borderTop: noBorderTop ? "none" : "0.5px solid var(--bg-border)",
           background: "var(--bg-base)",
           cursor: "pointer",
         }}
       >
-        {/* Score chip */}
+        {/* Score chip or stock logo */}
         {score !== undefined ? (
           <ScoreChip score={score} />
         ) : (
-          <span
-            aria-hidden
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: "var(--radius-sm)",
-              background: "var(--bg-surface)",
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "var(--text-xs)",
-              color: "var(--text-ghost)",
-            }}
-          >
-            —
-          </span>
+          <StockLogo ticker={position.ticker} />
         )}
 
         {/* Middle: title line (ticker · exchange · badge) + sub-line */}

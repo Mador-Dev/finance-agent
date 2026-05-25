@@ -7,12 +7,9 @@ import {
   ChevronDown,
   ChevronUp,
   Clock3,
-  Eye,
   ExternalLink,
   FileSearch,
-  Layers3,
   Radar,
-  ShieldAlert,
   Sparkles,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -20,6 +17,7 @@ import { apiClient } from "../api/client";
 import { cancelJob, fetchJobs, resumeJob } from "../api/jobs";
 import { Spinner } from "../components/ui/Spinner";
 import { EmptyState } from "../components/ui/EmptyState";
+import { VerdictBadge } from "../components/ui/Badge";
 import type { FeedPageResponse, FeedItem, FeedItemEntry, Job } from "../types/api";
 import { usePreferencesStore } from "../store/preferencesStore";
 import { t, tConfidence } from "../store/i18n";
@@ -92,24 +90,6 @@ const MODE_META: Record<string, { label: string; icon: ReactElement }> = {
     label: "New ideas",
     icon: <Sparkles size={12} />,
   },
-};
-
-const VERDICT_COLORS: Record<string, string> = {
-  SELL: "bg-red-500/20 text-red-300 border-red-500/30",
-  CLOSE: "bg-red-500/20 text-red-300 border-red-500/30",
-  REDUCE: "bg-yellow-500/15 text-yellow-300 border-yellow-500/25",
-  BUY: "bg-blue-500/15 text-blue-300 border-blue-500/25",
-  ADD: "bg-blue-500/15 text-blue-300 border-blue-500/25",
-  HOLD: "bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)] border-[var(--color-border)]",
-};
-
-const VERDICT_SYMBOLS: Record<string, string> = {
-  BUY: "↑",
-  ADD: "+",
-  HOLD: "•",
-  REDUCE: "↓",
-  SELL: "×",
-  CLOSE: "×",
 };
 
 const CONFIDENCE_COLORS: Record<string, string> = {
@@ -235,7 +215,18 @@ function VerdictPill({
   active?: boolean;
   onClick?: () => void;
 }) {
-  const color = VERDICT_COLORS[verdict] ?? VERDICT_COLORS.HOLD;
+  const verdictStyleMap: Record<string, string> = {
+    BUY:    "bg-[var(--color-green-bg)] text-[var(--color-green)] border-[var(--color-green-border)]",
+    ADD:    "bg-[var(--color-green-bg)] text-[var(--color-green)] border-[var(--color-green-border)]",
+    HOLD:   "bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--bg-border)]",
+    REDUCE: "bg-[var(--color-amber-bg)] text-[var(--color-amber)] border-[var(--color-amber-border)]",
+    SELL:   "bg-[var(--color-red-bg)] text-[var(--color-red)] border-[var(--color-red-border)]",
+    CLOSE:  "bg-[var(--color-red-bg)] text-[var(--color-red)] border-[var(--color-red-border)]",
+  };
+  const verdictSymbolMap: Record<string, string> = {
+    BUY: "↑", ADD: "+", HOLD: "·", REDUCE: "↓", SELL: "×", CLOSE: "×",
+  };
+  const color = verdictStyleMap[verdict] ?? verdictStyleMap.HOLD;
   return (
     <button
       type="button"
@@ -246,7 +237,7 @@ function VerdictPill({
     >
       <span className="font-bold">{ticker}</span>
       <span className="mx-1 opacity-40">·</span>
-      <span>{verdict}</span>
+      <span>{verdictSymbolMap[verdict]} {verdict}</span>
       {confidence ? (
         <span className="ml-1 opacity-50">{confidence[0]?.toUpperCase()}</span>
       ) : null}
@@ -1087,96 +1078,71 @@ function QuickCheckSection({ content: c }: { content: Rec }) {
 function StrategySection({ content: c }: { content: Rec }) {
   type Catalyst = { description: string; expiresAt: string | null; triggered: boolean };
   const catalysts = c.catalysts as Catalyst[] | undefined;
-  const entryConditions = c.entryConditions as string[] | undefined;
-  const exitConditions = c.exitConditions as string[] | undefined;
   const verdict = isVerdict(c.verdict) ? c.verdict : null;
   const confidence = typeof c.confidence === "string" ? c.confidence : null;
-  const reasoning = typeof c.reasoning === "string" ? reasoningSnippet(c.reasoning, 280) : "";
+  const reasoning = typeof c.reasoning === "string" ? reasoningSnippet(c.reasoning, 200) : "";
 
   return (
-    <div className="space-y-5">
-      {verdict || confidence ? (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2">
-          {verdict ? (
-            <p className="text-sm font-bold text-[var(--color-fg-default)]">
-              {verdict}: {verdictSentence(verdict)}
-            </p>
-          ) : null}
-          {confidence ? (
-            <p className="mt-1 text-[11px] text-[var(--color-fg-muted)]">
-              {confidenceExplanation(confidence)}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+    <div className="space-y-4">
+      {/* Verdict + confidence row */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {verdict ? (
+          <VerdictBadge verdict={verdict} size="sm" />
+        ) : null}
+        {confidence ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1 text-[10px] font-medium text-[var(--color-fg-muted)] uppercase tracking-wide">
+            {confidence} confidence
+          </span>
+        ) : null}
+        {verdict ? (
+          <span className="text-[11px] text-[var(--color-fg-muted)]">{verdictSentence(verdict)}</span>
+        ) : null}
+      </div>
 
+      {/* Short reasoning */}
       {reasoning ? <BodyText text={reasoning} /> : null}
 
+      {/* Catalysts */}
       {catalysts && catalysts.length > 0 ? (
         <div>
-          <p className="mb-2 text-xs font-bold text-[var(--color-fg-default)]">Catalysts</p>
-          <div className="space-y-2">
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-fg-subtle)]">Catalysts</p>
+          <div className="flex flex-wrap gap-1.5">
             {catalysts.map((cat, i) => {
               const expired = cat.expiresAt && new Date(cat.expiresAt) < new Date() && !cat.triggered;
               return (
-                <div
+                <span
                   key={i}
-                  className={`rounded-xl border px-3 py-2 text-[11px] ${
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
                     cat.triggered
-                      ? "border-emerald-500/20 bg-emerald-500/6"
+                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-400"
                       : expired
-                        ? "border-red-500/20 bg-red-500/6"
-                        : "border-[var(--color-border)] bg-[var(--color-bg-muted)]"
+                      ? "border-red-500/30 bg-red-500/8 text-red-400"
+                      : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
                   }`}
                 >
-                  <p className="text-[var(--color-fg-default)]">{formatCatalyst(cat)}</p>
-                  <div className="mt-0.5 flex gap-3 text-[10px] text-[var(--color-fg-subtle)]">
-                    {cat.triggered ? <span className="text-emerald-400">✓ Triggered</span> : null}
-                    {expired ? <span className="text-red-400">⚠ Expired</span> : null}
-                  </div>
-                </div>
+                  {cat.triggered ? "✓" : expired ? "⚠" : "◦"} {formatCatalyst(cat)}
+                </span>
               );
             })}
           </div>
         </div>
       ) : null}
 
+      {/* Bull / Bear — compact side-by-side */}
       {c.bullCase || c.bearCase ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2">
           {c.bullCase ? (
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/6 px-3 py-2">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-emerald-400">Bull</p>
-              <p className="text-[11px] text-[var(--color-fg-muted)]">{c.bullCase as string}</p>
+              <p className="mb-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-400">Bull</p>
+              <p className="text-[11px] leading-snug text-[var(--color-fg-muted)] line-clamp-3">{c.bullCase as string}</p>
             </div>
           ) : null}
           {c.bearCase ? (
             <div className="rounded-xl border border-red-500/20 bg-red-500/6 px-3 py-2">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-red-400">Bear</p>
-              <p className="text-[11px] text-[var(--color-fg-muted)]">{c.bearCase as string}</p>
+              <p className="mb-0.5 text-[9px] font-bold uppercase tracking-wide text-red-400">Bear</p>
+              <p className="text-[11px] leading-snug text-[var(--color-fg-muted)] line-clamp-3">{c.bearCase as string}</p>
             </div>
           ) : null}
-        </div>
-      ) : null}
-
-      {entryConditions && entryConditions.length > 0 ? (
-        <div>
-          <p className="mb-1.5 text-xs font-bold text-[var(--color-fg-default)]">Entry conditions</p>
-          <div className="space-y-1">
-            {entryConditions.map((cond, i) => (
-              <p key={i} className="text-[11px] text-[var(--color-fg-muted)]">· {cond}</p>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {exitConditions && exitConditions.length > 0 ? (
-        <div>
-          <p className="mb-1.5 text-xs font-bold text-[var(--color-fg-default)]">Exit conditions</p>
-          <div className="space-y-1">
-            {exitConditions.map((cond, i) => (
-              <p key={i} className="text-[11px] text-[var(--color-fg-muted)]">· {cond}</p>
-            ))}
-          </div>
         </div>
       ) : null}
     </div>
@@ -1264,9 +1230,10 @@ function AnalystTabContent({
   const content = getReportContent(detailReports, reportType);
   if (!content) {
     return (
-      <p className="text-sm text-[var(--color-fg-muted)]">
-        No {TAB_LABELS[reportType].toLowerCase()} data available.
-      </p>
+      <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-[var(--color-border)] py-6 text-center">
+        <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">{TAB_LABELS[reportType]} not available</p>
+        <p className="text-[10px] text-[var(--color-fg-subtle)]">This report was not generated for this batch</p>
+      </div>
     );
   }
 
@@ -1280,6 +1247,257 @@ function AnalystTabContent({
     case "quick_check": return <QuickCheckSection content={content} />;
     default: return null;
   }
+}
+
+// ─── Ticker detail modal (opened when tapping a row in daily_brief) ─────────
+
+function TickerDetailModal({
+  item,
+  ticker,
+  onClose,
+}: {
+  item: FeedItem;
+  ticker: string;
+  onClose: () => void;
+}) {
+  const entry = item.entries[ticker];
+  const reportTypes: DetailReportType[] = ["strategy"];
+  const visibleTabs = reportTypes as DetailReportType[];
+  const [activeTab, setActiveTab] = useState<DetailReportType>("strategy");
+
+  const batchId = item.batchId ?? item.id;
+  const { data: detailReports, isLoading } = useQuery({
+    queryKey: ["detail-reports-modal", batchId, ticker],
+    queryFn: () => fetchDetailReports(batchId, ticker, reportTypes),
+    enabled: !!batchId && !!ticker,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const verdict = entry?.verdict;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        background: "rgba(0,0,0,0.55)",
+        backdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 480,
+          background: "var(--color-bg-subtle, var(--bg-base))",
+          borderRadius: 16,
+          maxHeight: "80vh",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          border: "1px solid var(--color-border)",
+          boxShadow: "0 24px 48px rgba(0,0,0,0.4)",
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
+          <span className="font-mono text-[13px] font-bold text-[var(--color-fg-default)]">{ticker}</span>
+          {verdict ? (
+            <VerdictBadge verdict={verdict} size="sm" />
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto shrink-0 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[10px] text-[var(--color-fg-muted)] hover:border-[var(--color-fg-subtle)] hover:text-[var(--color-fg-default)]"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Entry reason — always available, no API needed */}
+        {(entry?.moveReason ?? entry?.reasoning) ? (
+          <div className="border-b border-[var(--color-border)] px-4 py-3">
+            <p className="mb-1 text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">Reason</p>
+            <p className="text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
+              {entry.moveReason ?? entry.reasoning}
+            </p>
+          </div>
+        ) : null}
+
+        {/* Tab bar */}
+        <div className="flex shrink-0 border-b border-[var(--color-border)] px-4">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`mr-5 shrink-0 border-b-2 pb-2.5 pt-2.5 text-[11px] font-semibold tracking-wide transition-colors ${
+                activeTab === tab
+                  ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
+                  : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
+              }`}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab content */}
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {isLoading ? (
+            <div className="flex justify-center py-10">
+              <Spinner size="md" />
+            </div>
+          ) : (
+            <AnalystTabContent reportType={activeTab} detailReports={detailReports} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Ticker logo (parqet CDN, monogram fallback) ──────────────────────────────
+
+function TickerLogo({ ticker, size = 24 }: { ticker: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const hue = ticker.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+  if (failed) {
+    return (
+      <span
+        aria-hidden
+        style={{
+          width: size, height: size, borderRadius: 6, flexShrink: 0,
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: `hsl(${hue} 55% 18%)`,
+          border: `1px solid hsl(${hue} 45% 30%)`,
+          fontSize: 9, fontWeight: 700,
+          color: `hsl(${hue} 75% 75%)`,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          letterSpacing: "-0.03em", userSelect: "none",
+        }}
+      >
+        {ticker.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://assets.parqet.com/logos/symbol/${ticker}?format=svg`}
+      alt={ticker}
+      onError={() => setFailed(true)}
+      style={{
+        width: size, height: size, borderRadius: 6, flexShrink: 0,
+        objectFit: "contain",
+        background: "var(--bg-surface)",
+        border: "0.5px solid var(--bg-border)",
+      }}
+    />
+  );
+}
+
+// ─── Entry table (shared by daily_brief, multi-ticker batch, single-ticker summary) ────
+
+function EntryTable({
+  entries,
+  selectedTicker,
+  onSelectTicker,
+  footer,
+}: {
+  entries: FeedItemEntry[];
+  selectedTicker?: string | null;
+  onSelectTicker?: (ticker: string) => void;
+  footer?: ReactNode;
+}) {
+  const isClickable = !!onSelectTicker;
+  return (
+    <div>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/40">
+            <th className="py-2.5 pl-4 pr-2 text-left text-[9px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]" colSpan={2}>Ticker</th>
+            <th className="py-2.5 pr-3 text-left text-[9px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">Verdict</th>
+            <th className="py-2.5 pr-3 text-left text-[9px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">Confidence</th>
+            <th className="py-2.5 pr-4 text-right text-[9px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">Day</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry, idx) => {
+            const dayPct = entry.dayChangePct;
+            const isTracking = entry.dailySection === "tracking";
+            const isEscalated = ESCALATED.has(entry.verdict);
+            const isQueued = entry.deepDiveQueued;
+            const isActive = selectedTicker === entry.ticker;
+            const isLast = idx === entries.length - 1;
+            const accentBorder = isActive
+              ? "border-l-[3px] border-l-[var(--color-accent-blue)]"
+              : isEscalated
+              ? "border-l-[3px] border-l-red-500/60"
+              : isQueued
+              ? "border-l-[3px] border-l-sky-500/60"
+              : "border-l-[3px] border-l-transparent";
+            return (
+              <tr
+                key={entry.ticker}
+                onClick={isClickable ? () => onSelectTicker!(entry.ticker) : undefined}
+                className={`group transition-colors ${isLast ? "" : "border-b border-[var(--color-border)]"} ${
+                  isClickable ? "cursor-pointer hover:bg-[var(--color-bg-muted)]/50" : ""
+                } ${isActive ? "bg-[var(--color-bg-muted)]" : ""}`}
+              >
+                {/* Logo */}
+                <td className={`py-3 pl-4 pr-2 w-10 transition-colors ${accentBorder} ${isClickable && !isActive ? "group-hover:border-l-[var(--color-accent-blue)]" : ""}`}>
+                  <TickerLogo ticker={entry.ticker} size={24} />
+                </td>
+                {/* Ticker name */}
+                <td className="py-3 pr-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono text-[12px] font-bold text-[var(--color-fg-default)]">{entry.ticker}</span>
+                    {isTracking ? <span className="text-[8px] text-[var(--color-fg-subtle)]">WL</span> : null}
+                    {isQueued ? <span className="text-[8px] text-sky-400">▶</span> : null}
+                  </div>
+                </td>
+                {/* Verdict */}
+                <td className="py-3 pr-3">
+                  <VerdictBadge verdict={entry.verdict} size="sm" />
+                </td>
+                {/* Confidence */}
+                <td className="py-3 pr-3">
+                  {entry.confidence ? (
+                    <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium capitalize text-[var(--color-fg-subtle)]">
+                      {entry.confidence}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-[var(--color-fg-subtle)]">—</span>
+                  )}
+                </td>
+                {/* Day % */}
+                <td className={`py-3 pr-4 text-right tabular-nums text-[12px] font-semibold ${
+                  dayPct == null || dayPct === 0 ? "text-[var(--color-fg-subtle)]"
+                  : dayPct > 0 ? "text-emerald-400" : "text-red-400"
+                }`}>
+                  {dayPct != null && dayPct !== 0 ? `${dayPct > 0 ? "+" : ""}${dayPct.toFixed(1)}%` : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {footer ? <div className="px-4 py-2.5 border-t border-[var(--color-border)]">{footer}</div> : null}
+    </div>
+  );
 }
 
 // ─── Report card ──────────────────────────────────────────────────────────────
@@ -1308,6 +1526,7 @@ function ReportCard({
   expandedReportTypes: DetailReportType[];
 }) {
   const language = usePreferencesStore((s) => s.language);
+  const [modalTicker, setModalTicker] = useState<string | null>(null);
   const meta = modeMeta(item.mode);
   const entries = Object.values(item.entries);
   const { escalated } = groupEntries(entries);
@@ -1354,336 +1573,143 @@ function ReportCard({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] shadow-sm">
-      {/* ── Tappable header ── */}
-      <button type="button" onClick={onToggle} className="w-full text-left">
-        <div className="p-4">
-          {/* Mode + date row */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]">
-                {meta.icon}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-fg-subtle)]">
-                  <span>{meta.label}</span>
-                  {item.tickerCount > 1 ? (
-                    <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 py-0.5 text-[10px]">
-                      {item.tickerCount}
-                    </span>
-                  ) : null}
-                </div>
-                <h4 className="mt-1 truncate text-base font-semibold text-[var(--color-fg-default)]">{item.title}</h4>
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <span className="block text-xs text-[var(--color-fg-subtle)]">{formatDate(item.createdAt)}</span>
-            </div>
+      {/* ── Tappable header — compact one-liner ── */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`w-full text-left relative z-10 transition-shadow ${
+          expanded
+            ? "shadow-[0_4px_12px_rgba(0,0,0,0.18)]"
+            : ""
+        }`}
+      >
+        <div className="flex items-center gap-3 px-4 py-3">
+          {/* Mode icon */}
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]">
+            {meta.icon}
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <SignalBadge
-              icon={flaggedCount > 0 ? <ShieldAlert size={12} /> : trackingDailyEntries.length > 0 ? <Eye size={12} /> : <Layers3 size={12} />}
-              label={
-                flaggedCount > 0
-                  ? `${flaggedCount} need review`
-                  : trackingDailyEntries.length > 0
-                    ? `${trackingDailyEntries.length} watchlist names`
-                    : `${item.tickerCount} names covered`
-              }
-              tone={badgeTone}
-            />
-            {queuedDailyEntries.length > 0 ? (
-              <SignalBadge icon={<Radar size={12} />} label={`${queuedDailyEntries.length} deep dives queued`} tone="info" />
+          {/* Mode label + key detail */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+            <span className="shrink-0 text-[11px] font-semibold text-[var(--color-fg-muted)]">{meta.label}</span>
+            {isBriefMode ? (
+              <span className="shrink-0 rounded-full bg-[var(--color-bg-muted)] px-1.5 py-0.5 text-[9px] text-[var(--color-fg-subtle)]">
+                {item.tickerCount}
+              </span>
+            ) : selectedEntry ? (
+              <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--color-fg-default)]">{selectedEntry.ticker}</span>
             ) : null}
             {!isBriefMode && selectedEntry?.verdict ? (
-              <SignalBadge
-                icon={<span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-current text-[10px] leading-none">{VERDICT_SYMBOLS[selectedEntry.verdict] ?? "•"}</span>}
-                label={selectedEntry.verdict}
-                tone="default"
-              />
+              <VerdictBadge verdict={selectedEntry.verdict} size="sm" />
+            ) : null}
+            {isBriefMode && flaggedCount > 0 ? (
+              <span className="shrink-0 text-[10px] font-medium text-yellow-400">⚠ {flaggedCount}</span>
             ) : null}
           </div>
 
-          {isBriefMode ? (
-            <p className="mt-1.5 text-[11px] font-medium text-[var(--color-fg-subtle)]">
-              {summaryMetrics[0]?.value}
-            </p>
-          ) : null}
-
-          {/* Escalation alert — non-interactive colored tags for brief modes */}
-          {false ? (
-            <div className="mt-3">
-              <div className="mb-2 flex items-center gap-1.5">
-                <AlertTriangle size={11} className="text-yellow-400" />
-                <span className="text-sm font-medium text-yellow-400">
-                  {escalated.length} position{escalated.length !== 1 ? "s" : ""} flagged
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {escalated.map((e) => (
-                  <span
-                    key={e.ticker}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${VERDICT_COLORS[e.verdict] ?? ""}`}
-                  >
-                    <span className="font-bold">{e.ticker}</span>
-                    <span className="mx-1 opacity-40">·</span>
-                    {e.verdict}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {/* Single-ticker verdict (deep dive / quick check / new ideas) */}
-          {!isBriefMode && selectedEntry ? (
-            <div className="mt-3 flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${VERDICT_COLORS[selectedEntry.verdict] ?? ""}`}>
-                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-current text-[10px] leading-none">
-                  {VERDICT_SYMBOLS[selectedEntry.verdict] ?? "•"}
-                </span>
-                {selectedEntry.verdict}
-              </span>
-              <span className={`text-sm font-medium ${CONFIDENCE_COLORS[selectedEntry.confidence] ?? "text-[var(--color-fg-muted)]"}`}>
-                {tConfidence(selectedEntry.confidence, language)}
-              </span>
-              {selectedEntry.timeframe && selectedEntry.timeframe !== "undefined" ? (
-                <span className="text-xs text-[var(--color-fg-subtle)]">· {selectedEntry.timeframe}</span>
-              ) : null}
-            </div>
-          ) : null}
-          {!isBriefMode && selectedEntry && expanded ? (
-            <p className="mt-2 text-[12px] leading-5 text-[var(--color-fg-muted)]">
-              {isVerdict(selectedEntry.verdict) ? `${verdictSentence(selectedEntry.verdict)} ` : ""}
-              {confidenceExplanation(selectedEntry.confidence)}
-            </p>
-          ) : null}
-
-          {/* Summary — clamped in collapsed state, full text in expanded panel */}
-          <p className={`mt-2 text-sm leading-6 text-[var(--color-fg-muted)] ${!expanded ? "line-clamp-2" : ""}`}>{item.summary}</p>
-          {topEntries.length > 0 ? (
-            <div className="mt-2 flex items-start gap-2 text-sm leading-6 text-[var(--color-fg-muted)]">
-              <span className="mt-1 inline-flex h-2 w-2 shrink-0 rounded-full bg-[var(--color-accent-blue)]" />
-              <p className="line-clamp-1">
-                {topEntries[0]?.ticker}: {topEntries[0]?.moveReason ?? topEntries[0]?.deepDiveQueueReason ?? topEntries[0]?.reasoning}
-              </p>
-            </div>
-          ) : null}
-          {trackingEntry && expanded ? (
-            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2">
-              <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-fg-subtle)]">Tracked idea</p>
-              <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-[var(--color-fg-muted)]">
-                {trackingEntry.stance ? <span className="font-bold text-[var(--color-fg-default)]">{trackingEntry.stance}</span> : null}
-                {typeof trackingEntry.potentialScore === "number" ? <span>{trackingEntry.potentialScore}/100 potential</span> : null}
-                {typeof trackingEntry.urgencyScore === "number" ? <span>{trackingEntry.urgencyScore}/100 urgency</span> : null}
-                {typeof trackingEntry.suggestedAllocationPct === "number" ? (
-                  <span>{trackingEntry.suggestedAllocationPct.toFixed(1)}% / {formatILS(trackingEntry.suggestedAllocationILS)}</span>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {item.dailyBrief?.marketView && expanded ? (
-            <p className="mt-2 text-sm leading-6 text-[var(--color-fg-subtle)]">{item.dailyBrief.marketView}</p>
-          ) : null}
-
-          <div className="mt-4 flex items-center justify-between border-t border-[var(--color-border)]/50 pt-3">
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[11px] font-semibold tracking-wide transition-all ${
-                expanded
-                  ? "border-[var(--color-border)] bg-transparent text-[var(--color-fg-muted)]"
-                  : "border-[var(--color-accent-blue)]/40 bg-[var(--color-accent-blue)]/10 text-[var(--color-accent-blue)]"
-              }`}
-            >
-              {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              {expanded ? "Collapse" : "View report"}
-            </span>
+          {/* Date + chevron */}
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-[10px] text-[var(--color-fg-subtle)]">{formatDate(item.createdAt)}</span>
+            {expanded
+              ? <ChevronUp size={12} className="text-[var(--color-fg-subtle)]" />
+              : <ChevronDown size={12} className="text-[var(--color-fg-subtle)]" />}
           </div>
-
         </div>
       </button>
 
       {/* ── Expanded panel ── */}
       {expanded ? (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-base)]/60">
-          {item.dailyBrief ? (
-            <div className="px-5 py-5">
-              <div className="space-y-5">
-                <InsightSection
-                  title="Session brief"
-                  subtitle={item.dailyBrief.headline ?? "A structured readout of what changed across the portfolio and watchlist."}
-                >
-                  {item.dailyBrief.today ? <p className="text-sm leading-6 text-[var(--color-fg-muted)]">{item.dailyBrief.today}</p> : null}
-                </InsightSection>
-                {portfolioMovers.length > 0 ? (
-                  <InsightSection
-                    title="Biggest portfolio movers"
-                    subtitle="Largest same-day changes with the analyst explanation attached to each position."
-                  >
-                    <div className="space-y-2">
-                      {portfolioMovers.map((entry) => (
-                        <FeedTickerCard
-                          key={entry.ticker}
-                          ticker={entry.ticker}
-                          detail={entry.moveReason ?? entry.reasoning}
-                          trailing={
-                            <span className={`text-xs font-semibold ${(entry.dayChangePct ?? 0) >= 0 ? "text-[var(--color-accent-green)]" : "text-[var(--color-accent-red)]"}`}>
-                              {(entry.dayChangePct ?? 0) > 0 ? "+" : ""}{entry.dayChangePct ?? 0}%
-                            </span>
-                          }
-                        />
-                      ))}
-                    </div>
-                  </InsightSection>
-                ) : null}
-                {trackingDailyEntries.length > 0 ? (
-                  <InsightSection
-                    title="Tracking watchlist"
-                    subtitle="Names outside the live portfolio that the analyst believes deserve continued monitoring."
-                  >
-                    <div className="space-y-2">
-                      {trackingDailyEntries.map((entry) => (
-                        <FeedTickerCard
-                          key={entry.ticker}
-                          ticker={entry.ticker}
-                          tone="info"
-                          headline={entry.stance ? <span className="uppercase tracking-[0.12em]">{entry.stance}</span> : undefined}
-                          detail={entry.reasoning}
-                          meta={[
-                            typeof entry.potentialScore === "number" ? `${entry.potentialScore}/100 potential` : "",
-                            typeof entry.urgencyScore === "number" ? `${entry.urgencyScore}/100 urgency` : "",
-                            typeof entry.suggestedAllocationPct === "number" ? `${entry.suggestedAllocationPct.toFixed(1)}% suggested` : "",
-                          ].filter(Boolean)}
-                        />
-                      ))}
-                    </div>
-                  </InsightSection>
-                ) : null}
-                {trackingActionEntries.length > 0 ? (
-                  <InsightSection
-                    title="Tracking action candidates"
-                    subtitle="Watchlist names with enough change or urgency to justify a deeper review."
-                  >
-                    <div className="space-y-2">
-                      {trackingActionEntries.map((entry) => (
-                        <FeedTickerCard
-                          key={entry.ticker}
-                          ticker={entry.ticker}
-                          tone="warning"
-                          detail={entry.deepDiveQueueReason ?? entry.reasoning}
-                        />
-                      ))}
-                    </div>
-                  </InsightSection>
-                ) : null}
-                {queuedDailyEntries.length > 0 ? (
-                  <InsightSection
-                    title="Queued deep dives"
-                    subtitle="Positions that this brief escalated into a deeper single-position workflow."
-                  >
-                    <div className="space-y-2">
-                      {queuedDailyEntries.map((entry) => (
-                        <FeedTickerCard
-                          key={entry.ticker}
-                          ticker={entry.ticker}
-                          tone="warning"
-                          detail={`${entry.reasoning}. ${entry.deepDiveQueueReason ?? "Deep dive was queued by this daily brief."}`}
-                        />
-                      ))}
-                    </div>
-                  </InsightSection>
-                ) : null}
-                {attentionDailyEntries.length > 0 ? (
-                  <InsightSection
-                    title="Needs review"
-                  >
-                    <div className="space-y-2">
-                      {attentionDailyEntries.map((entry) => (
-                        <FeedTickerCard
-                          key={entry.ticker}
-                          ticker={entry.ticker}
-                          detail={`${entry.reasoning}. ${entry.deepDiveQueueReason ?? "Flagged for attention; no deep dive queue confirmation is attached to this daily brief."}`}
-                        />
-                      ))}
-                    </div>
-                  </InsightSection>
-                ) : null}
-                {item.dailyBrief.marketView || item.dailyBrief.tomorrow || item.dailyBrief.securityNote ? (
-                  <InsightSection
-                    title="Next watch"
-                    subtitle="What the analyst expects to matter next across the portfolio."
-                  >
-                    {nextWatchText ? <p className="text-sm leading-6 text-[var(--color-fg-muted)]">{nextWatchText}</p> : null}
-                    {item.dailyBrief.marketView ? <p className="mt-2 text-sm leading-6 text-[var(--color-fg-muted)]">{item.dailyBrief.marketView}</p> : null}
-                    {item.dailyBrief.securityNote ? <p className="mt-2 text-sm leading-6 text-[var(--color-fg-default)]">{item.dailyBrief.securityNote}</p> : null}
-                  </InsightSection>
-                ) : null}
-                {item.dailyBrief.dashboardPath ? (
-                  <Link
-                    to={item.dailyBrief.dashboardPath}
-                    className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-1.5 text-xs font-medium text-[var(--color-fg-default)]"
-                  >
-                    Open dashboard
-                  </Link>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {/* Ticker grid — for multi-ticker batches */}
-          {isMultiTicker ? (
-            <div className="px-5 pt-1">
-              <p className="mb-2 text-xs font-medium text-[var(--color-fg-subtle)]">
-                Select a position to inspect
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {orderedEntries.map((e) => (
-                  <VerdictPill
-                    key={e.ticker}
-                    ticker={e.ticker}
-                    verdict={e.verdict}
-                    confidence={e.confidence}
-                    active={selectedTicker === e.ticker}
-                    onClick={() => onSelectTicker(e.ticker)}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {/* Analyst tabs */}
-          {visibleTabs.length > 0 ? (
-            <div className="px-5 pt-4">
-              {/* Tab bar */}
-              <div className="-mx-5 overflow-x-auto">
-                <div className="flex min-w-max border-b border-[var(--color-border)] px-5">
-                  {visibleTabs.map((tabType) => (
-                    <button
-                      key={tabType}
-                      type="button"
-                      onClick={() => onTabChange(tabType)}
-                      className={`mr-5 shrink-0 border-b-2 pb-3 pt-1 text-xs font-semibold tracking-wide transition-colors ${
-                        activeTab === tabType
-                          ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
-                          : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
-                      }`}
-                    >
-                      {TAB_LABELS[tabType]}
-                    </button>
-                  ))}
+        <div className="bg-[var(--color-bg-base)] px-3 pb-3 pt-2.5">
+          <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
+            {/* ── Entry summary — always visible without API fetch ── */}
+            {item.dailyBrief ? (
+              /* Case A: daily_brief / full_report — clickable table; tapping a row opens detail modal */
+              <EntryTable
+                entries={orderedEntries}
+                onSelectTicker={setModalTicker}
+                footer={
+                  (item.dailyBrief.tomorrow ?? item.dailyBrief.marketView) ? (
+                    <p className="text-[10px] text-[var(--color-fg-subtle)]">
+                      {item.dailyBrief.tomorrow ?? item.dailyBrief.marketView}
+                    </p>
+                  ) : null
+                }
+              />
+            ) : isMultiTicker ? (
+              /* Case B: non-brief multi-ticker (deep dive batch) — table with tab-nav selection */
+              <EntryTable entries={orderedEntries} selectedTicker={selectedTicker} onSelectTicker={onSelectTicker} />
+            ) : selectedEntry ? (
+              /* Case C: non-brief single-ticker (quick_check, deep_dive) — entry snapshot */
+              <div className="border-b border-[var(--color-border)] px-4 py-3">
+                {/* Verdict row */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <VerdictBadge verdict={selectedEntry.verdict} size="sm" />
+                  {selectedEntry.confidence ? (
+                    <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">
+                      {selectedEntry.confidence} confidence
+                    </span>
+                  ) : null}
+                  {selectedEntry.dayChangePct != null ? (
+                    <span className={`ml-auto tabular-nums text-[11px] font-semibold ${
+                      selectedEntry.dayChangePct > 0 ? "text-emerald-400" : selectedEntry.dayChangePct < 0 ? "text-red-400" : "text-[var(--color-fg-subtle)]"
+                    }`}>
+                      {selectedEntry.dayChangePct > 0 ? "+" : ""}{selectedEntry.dayChangePct.toFixed(1)}%
+                    </span>
+                  ) : null}
                 </div>
               </div>
+            ) : null}
 
-              {/* Tab content */}
-              <div className="pb-6 pt-5">
-                {detailsLoading ? (
-                  <div className="flex justify-center py-8">
-                    <Spinner size="md" />
+            {/* Analyst reports — non-brief modes only */}
+            {visibleTabs.length > 0 && !isBriefMode ? (
+              <div>
+                {/* Section label + tab bar */}
+                <div className="px-4 pt-3">
+                  <p className="mb-2 text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">
+                    Analyst reports
+                  </p>
+                </div>
+                <div className="overflow-x-auto border-b border-[var(--color-border)]">
+                  <div className="flex min-w-max px-4">
+                    {visibleTabs.map((tabType) => (
+                      <button
+                        key={tabType}
+                        type="button"
+                        onClick={() => onTabChange(tabType)}
+                        className={`mr-5 shrink-0 border-b-2 pb-2.5 pt-1 text-[11px] font-semibold tracking-wide transition-colors ${
+                          activeTab === tabType
+                            ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
+                            : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
+                        }`}
+                      >
+                        {TAB_LABELS[tabType]}
+                      </button>
+                    ))}
                   </div>
-                ) : (
-                  <AnalystTabContent reportType={activeTab} detailReports={detailReports} />
-                )}
+                </div>
+                <div className="px-4 pb-6 pt-4">
+                  {detailsLoading ? (
+                    <div className="flex items-center gap-2 py-6 text-[11px] text-[var(--color-fg-subtle)]">
+                      <Spinner size="sm" />
+                      <span>Loading {TAB_LABELS[activeTab].toLowerCase()}…</span>
+                    </div>
+                  ) : (
+                    <AnalystTabContent reportType={activeTab} detailReports={detailReports} />
+                  )}
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
+      ) : null}
+
+      {/* Ticker detail modal — brief mode drill-in */}
+      {modalTicker ? (
+        <TickerDetailModal
+          item={item}
+          ticker={modalTicker}
+          onClose={() => setModalTicker(null)}
+        />
       ) : null}
     </div>
   );
@@ -1933,6 +1959,7 @@ export function Reports() {
             {reportItems.map((item) => {
               const expanded = expandedBatchId === item.batchId;
               const bk = item.batchId ?? item.id;
+              // Non-brief: default to first ticker so analyst tabs load immediately
               const selectedTicker = selectedTickerByBatch[bk] ?? item.tickers[0] ?? null;
               const activeTab: DetailReportType =
                 activeTabByBatch[bk] ??

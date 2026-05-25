@@ -11,19 +11,16 @@ import { useToastStore } from "../../store/toastStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { t, tConfidence } from "../../store/i18n";
 import { formatILS, timeAgo } from "../../utils/format";
-import { whyToday } from "../../utils/today/whyToday";
-import { snippet } from "../../utils/today/classifyAttention";
 import { scoreColor } from "../../utils/today/scoreColor";
 import {
   verdictSentence,
-  confidenceExplanation,
   scoreBucketLabel,
   scoreBucketEmoji,
   formatCatalyst,
   nextCatalyst,
   reasoningSnippet,
 } from "../../utils/advisory";
-import type { StrategyRow, AttentionItem, PositionRow, Verdict, VerdictRow } from "../../types/api";
+import type { StrategyRow, PositionRow, Verdict, VerdictRow } from "../../types/api";
 import { ThesisSection } from "./ThesisSection";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { usePositionGuidance } from "../../hooks/usePositionGuidance";
@@ -31,9 +28,6 @@ import { healthScore, DEFAULT_STOP_LOSS_PCT } from "../../utils/today/healthScor
 
 interface StrategyModalProps {
   ticker: string | null;
-  attentionItem?: AttentionItem | null;
-  /** 1-indexed rank in the attention list — shown as "PR {N}" in "Why this fired" header */
-  attentionRank?: number;
   score?: number;
   position?: PositionRow | null;
   onClose: () => void;
@@ -85,8 +79,6 @@ function ctaBorder(verdict: Verdict): string {
 
 export function StrategyModal({
   ticker,
-  attentionItem,
-  attentionRank,
   score,
   position,
   onClose,
@@ -211,8 +203,6 @@ export function StrategyModal({
             <DetailContent
               strategy={data}
               ticker={ticker}
-              attentionItem={attentionItem ?? null}
-              attentionRank={attentionRank}
               score={score}
               position={position ?? null}
               language={language}
@@ -280,16 +270,12 @@ export function StrategyModal({
 function DetailContent({
   strategy,
   ticker,
-  attentionItem,
-  attentionRank,
   score,
   position,
   language,
 }: {
   strategy: StrategyRow;
   ticker: string | null;
-  attentionItem: AttentionItem | null;
-  attentionRank?: number;
   score?: number;
   position: PositionRow | null;
   language: "en" | "he";
@@ -302,14 +288,6 @@ function DetailContent({
   const scoreBreakdown = hasScore
     ? healthScore(strategy as unknown as VerdictRow, position ?? undefined, DEFAULT_STOP_LOSS_PCT).breakdown
     : null;
-
-  const whyText = attentionItem
-    ? whyToday(attentionItem, language)
-    : strategy.reasoning
-    ? snippet(strategy.reasoning, 140)
-    : null;
-
-  const rationale = twoSentences(strategy.reasoning);
 
   const dayChangePct = position?.dayChangePct ?? 0;
   const dayChangeILS = position?.dayChangeILS ?? 0;
@@ -326,6 +304,7 @@ function DetailContent({
     strategy.timeframe && strategy.timeframe !== "undefined"
       ? ` · ${strategy.timeframe.replace(/_/g, " ")} horizon`
       : "";
+  const rationale = twoSentences(strategy.reasoning);
   return (
     <div>
       {/* ScoreHero — score left, verdict + updated right */}
@@ -431,15 +410,18 @@ function DetailContent({
           sub="of portfolio"
         />
         <StatCell
-          label={language === "he" ? "מניות" : "Shares held"}
-          value={position?.shares !== undefined ? String(position.shares) : "—"}
+          label={language === "he" ? "רווח / הפסד" : "P / L"}
+          value={
+            position?.plPct !== undefined
+              ? `${position.plPct >= 0 ? "+" : ""}${position.plPct.toFixed(1)}%`
+              : "—"
+          }
           sub={
-            position?.shares === 1
-              ? "single unit"
-              : position?.shares !== undefined
-              ? `${position.shares} shares`
+            position?.plILS !== undefined && position.plILS !== 0
+              ? `${position.plILS >= 0 ? "+" : ""}${formatILS(Math.abs(position.plILS))}`
               : undefined
           }
+          positive={position?.plPct !== undefined ? position.plPct > 0 : null}
         />
         <StatCell
           label={language === "he" ? "היום" : "Today"}
@@ -451,54 +433,77 @@ function DetailContent({
           }
           positive={hasDay ? dayChangePct > 0 : null}
         />
-        <StatCell
-          label={language === "he" ? "ביטחון" : "Confidence"}
-          value={tConfidence(strategy.confidence, language)}
-          valueColor={confidenceColor}
-          sub={strategy.confidence === "low" ? "partial data" : undefined}
-        />
+        {/* Confidence — grey pill */}
+        <div
+          style={{
+            background: "var(--bg-surface)",
+            borderRadius: "var(--radius-md)",
+            padding: "10px 12px",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "var(--text-2xs)",
+              color: "var(--text-tertiary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 400,
+              marginBottom: 6,
+            }}
+          >
+            {language === "he" ? "ביטחון" : "Confidence"}
+          </div>
+          <span
+            style={{
+              display: "inline-block",
+              fontSize: "var(--text-sm)",
+              fontWeight: "var(--weight-bold)",
+              color: "var(--text-secondary)",
+              border: "0.5px solid var(--bg-border-mid)",
+              borderRadius: "var(--radius-pill)",
+              padding: "2px 10px",
+            }}
+          >
+            {tConfidence(strategy.confidence, language)}
+          </span>
+          {strategy.confidence === "low" && (
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 4 }}>
+              partial data
+            </div>
+          )}
+        </div>
       </div>
 
       <Divider />
 
-      {/* Why this fired */}
-      {whyText && (
+      {/* Your thesis */}
+      {ticker && (
+        <ThesisSection
+          ticker={ticker}
+          guidance={guidanceMap[ticker]}
+          onUpdate={updateGuidance}
+        />
+      )}
+
+      {/* AI analysis — reasoning snippet */}
+      {rationale && (
         <>
           <SectionHeader
-            label={language === "he" ? "למה זה עלה" : "Why this fired"}
-            meta={
-              attentionRank !== undefined && attentionRank > 0
-                ? `Deterministic · PR ${attentionRank}`
-                : `${language === "he" ? "עודכן" : "updated"} ${timeAgo(strategy.updatedAt)}`
-            }
+            label={language === "he" ? "ניתוח" : "Analysis"}
+            meta={`${language === "he" ? "עודכן" : "updated"} ${timeAgo(strategy.updatedAt)}`}
           />
           <p
             style={{
               padding: "0 16px 16px",
               fontSize: "var(--text-md)",
               lineHeight: 1.5,
-              color: "var(--text-primary)",
+              color: "var(--text-secondary)",
               fontWeight: "var(--weight-regular)",
             }}
           >
-            {whyText}
+            {rationale}
           </p>
         </>
-      )}
-
-      {/* Rationale — first 2 sentences, secondary color */}
-      {rationale && rationale !== whyText && (
-        <p
-          style={{
-            padding: "0 16px 16px",
-            fontSize: "var(--text-md)",
-            lineHeight: 1.5,
-            color: "var(--text-secondary)",
-            fontWeight: "var(--weight-regular)",
-          }}
-        >
-          {rationale}
-        </p>
       )}
 
       {/* Next catalyst — most urgent upcoming catalyst */}
@@ -534,33 +539,6 @@ function DetailContent({
         );
       })()}
 
-      {/* Confidence explanation */}
-      <div
-        style={{
-          margin: "0 16px 16px",
-          padding: "8px 12px",
-          borderRadius: "var(--radius-md)",
-          background: "var(--color-bg-muted, rgba(0,0,0,0.04))",
-          border: "0.5px solid var(--bg-border)",
-        }}
-      >
-        <span
-          style={{
-            fontSize: "var(--text-2xs)",
-            fontWeight: "var(--weight-bold)",
-            color: confidenceColor,
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
-            marginRight: 6,
-          }}
-        >
-          {tConfidence(strategy.confidence, language)}
-        </span>
-        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
-          {confidenceExplanation(strategy.confidence)}
-        </span>
-      </div>
-
       {/* Bull / Bear 2-col */}
       {(strategy.bullCase || strategy.bearCase) && (
         <div
@@ -584,23 +562,11 @@ function DetailContent({
         </div>
       )}
 
-      {/* Your thesis */}
-      {ticker && (
-        <>
-          <Divider />
-          <ThesisSection
-            ticker={ticker}
-            guidance={guidanceMap[ticker]}
-            onUpdate={updateGuidance}
-          />
-        </>
-      )}
-
       <Divider />
 
       {/* Conditions — exit first (most actionable), then entry */}
       <SectionHeader
-        label={language === "he" ? "תנאים" : "Exit conditions"}
+        label={language === "he" ? "תנאים" : "Conditions"}
         meta={`${strategy.entryConditions.length + strategy.exitConditions.length} active`}
       />
       <div style={{ padding: "0 16px 24px" }}>
@@ -793,3 +759,4 @@ function ConditionRow({
 function twoSentences(text: string | null | undefined): string {
   return reasoningSnippet(text, 280);
 }
+

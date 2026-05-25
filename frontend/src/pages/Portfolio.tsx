@@ -280,11 +280,6 @@ export function Portfolio() {
 
   // Attention drill-down state (separate from PositionDetailModal which uses selectedPosition)
   const [strategyTicker, setStrategyTicker] = useState<string | null>(null);
-  const strategyAttentionItem = useMemo(
-    () => attentionItems.find((i) => i.ticker === strategyTicker) ?? null,
-    [attentionItems, strategyTicker]
-  );
-
   const activeJobs = useMemo(() => {
     if (!jobsData?.jobs) return [];
     return jobsData.jobs.filter((job) => job.status === "pending" || job.status === "paused" || job.status === "running");
@@ -641,85 +636,112 @@ export function Portfolio() {
         </div>
       )}
 
-      {/* Active jobs strip — minor pill, not a banner */}
+      {/* Active jobs strip — clean status pill */}
       {!isBootstrapping && activeJobs.length > 0 && (
         <div style={{ marginTop: 8, padding: "0 16px" }}>
-          <div
+          <span
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
+              gap: 5,
+              padding: "3px 10px",
               borderRadius: "var(--radius-pill)",
-              background: "var(--bg-surface)",
-              border: "0.5px solid var(--bg-border)",
-              fontSize: "var(--text-xs)",
+              background: "var(--bg-surface-hover)",
+              border: "0.5px solid var(--bg-border-mid)",
+              fontSize: "var(--text-2xs)",
+              fontWeight: "var(--weight-medium)",
               color: "var(--text-secondary)",
+              letterSpacing: "0.01em",
             }}
           >
             <span
               aria-hidden
               style={{
-                width: 6,
-                height: 6,
+                width: 5,
+                height: 5,
                 borderRadius: "50%",
                 background: "var(--color-green)",
+                flexShrink: 0,
                 animation: "pulse 1.5s ease-in-out infinite",
               }}
             />
             {activeJobs.length} {t("jobsRunning", language)}
-          </div>
+          </span>
         </div>
       )}
 
-      {/* Section label: Holdings · N clear */}
+      {/* Section label — floating pill row, no bottom border */}
       <div
         style={{
-          marginTop: 20,
-          padding: "0 16px",
+          marginTop: 24,
+          padding: "0 16px 10px",
           display: "flex",
-          alignItems: "baseline",
+          alignItems: "center",
           justifyContent: "space-between",
         }}
       >
         <span
           style={{
+            display: "inline-flex",
+            alignItems: "center",
             fontSize: "var(--text-2xs)",
+            fontWeight: "var(--weight-semibold)",
             textTransform: "uppercase",
-            letterSpacing: "0.06em",
+            letterSpacing: "0.08em",
             color: "var(--text-tertiary)",
-            fontWeight: "var(--weight-regular)",
+            background: "var(--bg-surface)",
+            border: "0.5px solid var(--bg-border)",
+            borderRadius: "var(--radius-pill)",
+            padding: "3px 10px",
           }}
         >
           Holdings
         </span>
         {!isBootstrapping && clearPositions.length > 0 && (
-          <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-tertiary)" }}>
-            {clearPositions.length} clear
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              fontSize: "var(--text-2xs)",
+              fontWeight: "var(--weight-medium)",
+              color: "var(--text-secondary)",
+              background: "var(--bg-surface)",
+              border: "0.5px solid var(--bg-border)",
+              borderRadius: "var(--radius-pill)",
+              padding: "3px 10px",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {clearPositions.length} on track
           </span>
         )}
       </div>
 
-      {/* Holding rows — single layout, top borders create the row separators */}
-      {clearPositions.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          {clearPositions.map((position) => (
-            <PositionRow
-              key={`unified:${position.ticker}`}
-              position={position}
-              verdict={verdictMap[position.ticker]}
-              score={position._score}
-              isChecking={activeTickerChecks.has(position.ticker)}
-              jobType={tickerJobType.get(position.ticker)}
-              onQuickCheck={() => handleQuickCheck(position.ticker)}
-              onClick={() => handlePositionClick(position)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Holdings card — shadcn-style container, single clean border */}
+      <div
+        style={{
+          margin: "0 16px",
+          border: "0.5px solid var(--bg-border)",
+          borderRadius: 12,
+          overflow: "hidden",
+          background: "var(--bg-surface)",
+        }}
+      >
+        {clearPositions.map((position, index) => (
+          <PositionRow
+            key={`unified:${position.ticker}`}
+            position={position}
+            verdict={verdictMap[position.ticker]}
+            score={position._score}
+            isChecking={activeTickerChecks.has(position.ticker)}
+            jobType={tickerJobType.get(position.ticker)}
+            onQuickCheck={() => handleQuickCheck(position.ticker)}
+            onClick={() => handlePositionClick(position)}
+            noBorderTop={index === 0}
+          />
+        ))}
 
-      {/* Add Position button — dashed ghost */}
-      <div style={{ padding: "12px 16px 8px" }}>
+        {/* Add Position — flush footer row inside the card */}
         <button
           type="button"
           onClick={() => setAddPositionOpen(true)}
@@ -729,16 +751,16 @@ export function Portfolio() {
             alignItems: "center",
             justifyContent: "center",
             gap: 6,
-            padding: "12px",
-            border: "0.5px dashed var(--bg-border-mid)",
-            borderRadius: "var(--radius-md)",
+            padding: "11px 16px",
             background: "transparent",
-            color: "var(--text-secondary)",
+            border: "none",
+            borderTop: clearPositions.length > 0 ? "0.5px solid var(--bg-border)" : undefined,
+            color: "var(--text-tertiary)",
             fontSize: "var(--text-sm)",
             cursor: "pointer",
           }}
         >
-          <Plus size={14} />
+          <Plus size={13} />
           {t("addPosition", language)}
         </button>
       </div>
@@ -1036,12 +1058,6 @@ export function Portfolio() {
           ScoreHero color), and the position (drives Today/Shares stat cells). */}
       <StrategyModal
         ticker={strategyTicker}
-        attentionItem={strategyAttentionItem}
-        attentionRank={
-          strategyTicker
-            ? attentionItems.findIndex((i) => i.ticker === strategyTicker) + 1
-            : undefined
-        }
         score={strategyTicker ? tickerScores.get(strategyTicker) : undefined}
         position={strategyTicker ? portfolio?.positions.find((p) => p.ticker === strategyTicker) ?? null : null}
         onClose={() => setStrategyTicker(null)}

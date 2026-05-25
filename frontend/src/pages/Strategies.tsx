@@ -1,10 +1,53 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+
+/** Stock logo — identical style to portfolio page. */
+function StockLogo({ ticker }: { ticker: string }) {
+  const [failed, setFailed] = useState(false);
+  const hue = ticker.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 360;
+  if (failed) {
+    return (
+      <span
+        aria-hidden
+        style={{
+          width: 28, height: 28, borderRadius: 6,
+          background: `hsl(${hue} 55% 18%)`,
+          border: `1px solid hsl(${hue} 45% 30%)`,
+          flexShrink: 0, display: "inline-flex",
+          alignItems: "center", justifyContent: "center",
+          fontSize: 9, fontWeight: 700,
+          color: `hsl(${hue} 75% 75%)`,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          letterSpacing: "-0.03em", userSelect: "none",
+        }}
+      >
+        {ticker.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://assets.parqet.com/logos/symbol/${ticker}?format=svg`}
+      alt={ticker}
+      width={28}
+      height={28}
+      onError={() => setFailed(true)}
+      style={{
+        width: 28, height: 28, borderRadius: 6,
+        objectFit: "contain",
+        background: "var(--bg-surface)",
+        border: "0.5px solid var(--bg-border)",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 import { ChevronDown } from "lucide-react";
+import { usePositionGuidance } from "../hooks/usePositionGuidance";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchStrategies } from "../api/strategies";
 import { triggerJob } from "../api/jobs";
 import { StrategyModal } from "../components/portfolio/StrategyModal";
-import { VerdictBadge, ConfidenceBadge } from "../components/ui/Badge";
+import { VerdictBadge } from "../components/ui/Badge";
 import { Spinner } from "../components/ui/Spinner";
 import { ErrorState } from "../components/ui/ErrorState";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -217,6 +260,7 @@ export function Strategies() {
   const language = usePreferencesStore((s) => s.language);
   const queryClient = useQueryClient();
   const showToast = useToastStore((s) => s.show);
+  const { guidanceMap } = usePositionGuidance();
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [verdictFilter, setVerdictFilter] = useState<string>("All");
@@ -380,15 +424,18 @@ export function Strategies() {
                     className="cursor-pointer rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 transition-colors hover:bg-[var(--color-bg-muted)]/40"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm font-semibold text-[var(--color-fg-default)]">{strategy.ticker}</span>
-                          <VerdictBadge verdict={strategy.verdict} size="sm" />
+                      <div className="flex items-center gap-2.5">
+                        <StockLogo ticker={strategy.ticker} />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-semibold text-[var(--color-fg-default)]">{strategy.ticker}</span>
+                            <VerdictBadge verdict={strategy.verdict} size="sm" />
+                          </div>
+                          <p className="mt-0.5 text-[11px] text-[var(--color-fg-subtle)]">
+                            {timeAgo(strategy.updatedAt)}
+                            {strategy.hasExpiredCatalysts ? " · expired catalyst" : ""}
+                          </p>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-[var(--color-fg-subtle)]">
-                          {timeAgo(strategy.updatedAt)}
-                          {strategy.hasExpiredCatalysts ? " · expired catalyst" : ""}
-                        </p>
                       </div>
                       <ActionsDropdown
                         label="Actions"
@@ -416,7 +463,9 @@ export function Strategies() {
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
                         <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Confidence</p>
-                        <p className="mt-1 text-sm font-semibold text-[var(--color-fg-default)]">{tConfidence(strategy.confidence, language)}</p>
+                        <span className="mt-1.5 inline-block rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-sm font-medium text-[var(--color-fg-subtle)]">
+                          {tConfidence(strategy.confidence, language)}
+                        </span>
                       </div>
                       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-base)] px-3 py-2.5">
                         <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">Timeframe</p>
@@ -438,7 +487,13 @@ export function Strategies() {
                       </div>
                     ) : null}
 
-                    <p className="mt-3 text-sm leading-6 text-[var(--color-fg-muted)] line-clamp-3">{strategy.reasoning}</p>
+                    {guidanceMap[strategy.ticker]?.thesis?.trim() ? (
+                      <p className="mt-3 text-sm leading-6 text-[var(--color-fg-muted)] line-clamp-3">
+                        {guidanceMap[strategy.ticker]?.thesis}
+                      </p>
+                    ) : (
+                      <p className="mt-3 text-sm italic text-[var(--color-fg-subtle)]">No thesis yet</p>
+                    )}
                   </article>
                 );
               })}
@@ -477,7 +532,7 @@ export function Strategies() {
                       Weight
                     </th>
                     <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
-                      Thesis
+                      Your thesis
                     </th>
                     <th className="px-4 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-fg-subtle)]">
                       Actions
@@ -495,23 +550,28 @@ export function Strategies() {
                         className="cursor-pointer border-b border-[var(--color-border-muted)] align-top transition-colors hover:bg-[var(--color-bg-muted)]/50 last:border-0"
                       >
                         <td className="px-4 py-4">
-                          <div className="flex items-start gap-3">
+                          <div className="flex items-center gap-2.5">
+                            <StockLogo ticker={strategy.ticker} />
                             <div>
-                              <p className="font-mono text-sm font-semibold text-[var(--color-fg-default)]">{strategy.ticker}</p>
-                              <p className="mt-1 text-[11px] text-[var(--color-fg-subtle)]">{timeAgo(strategy.updatedAt)}</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className="font-mono text-sm font-semibold text-[var(--color-fg-default)]">{strategy.ticker}</p>
+                                {strategy.hasExpiredCatalysts ? (
+                                  <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-300">
+                                    Expired
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-[var(--color-fg-subtle)]">{timeAgo(strategy.updatedAt)}</p>
                             </div>
-                            {strategy.hasExpiredCatalysts ? (
-                              <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-300">
-                                Expired
-                              </span>
-                            ) : null}
                           </div>
                         </td>
                         <td className="px-4 py-4">
                           <VerdictBadge verdict={strategy.verdict} size="sm" />
                         </td>
                         <td className="px-4 py-4">
-                          <ConfidenceBadge confidence={tConfidence(strategy.confidence, language)} />
+                          <span className="inline-block rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-sm font-medium text-[var(--color-fg-subtle)]">
+                            {tConfidence(strategy.confidence, language)}
+                          </span>
                         </td>
                         <td className="px-4 py-4 text-sm font-medium text-[var(--color-fg-default)]">
                           {tTimeframe(strategy.timeframe, language)}
@@ -523,9 +583,13 @@ export function Strategies() {
                           {(strategy.positionWeightPct ?? 0).toFixed(1)}%
                         </td>
                         <td className="px-4 py-4">
-                          <p className="line-clamp-2 text-sm font-medium leading-6 text-[var(--color-fg-muted)]">
-                            {scope === "tracking" ? trackingMeta ?? strategy.reasoning : strategy.reasoning}
-                          </p>
+                          {guidanceMap[strategy.ticker]?.thesis?.trim() ? (
+                            <p className="line-clamp-2 text-sm font-medium leading-6 text-[var(--color-fg-muted)]">
+                              {guidanceMap[strategy.ticker]?.thesis}
+                            </p>
+                          ) : (
+                            <p className="text-sm italic text-[var(--color-fg-subtle)]">No thesis yet</p>
+                          )}
                         </td>
                         <td className="px-4 py-4 overflow-visible">
                           <div className="flex justify-end overflow-visible">

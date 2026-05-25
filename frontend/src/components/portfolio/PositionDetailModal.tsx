@@ -44,12 +44,12 @@ const VERDICT_LINE: Record<Verdict, string> = {
 };
 
 const VERDICT_CTA: Partial<Record<Verdict, string>> = {
-  BUY: "Add to Position",
-  ADD: "Add to Position",
+  BUY: "Deep dive before adding",
+  ADD: "Deep dive before adding",
   // HOLD intentionally absent — no primary action CTA for hold positions
-  REDUCE: "Reduce Position",
-  SELL: "Exit Position",
-  CLOSE: "Exit Position",
+  REDUCE: "Deep dive before trimming",
+  SELL: "Deep dive before exiting",
+  CLOSE: "Deep dive before exiting",
 };
 
 function ctaBg(verdict?: Verdict): string {
@@ -552,7 +552,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
         {/* ── Scrollable body ── */}
         <div style={{ flex: 1, overflowY: "auto" }}>
 
-          {/* Score hero — primary visual: "how is this position doing?" */}
+          {/* Position hero — score (when available) + current value */}
           <div
             style={{
               display: "flex",
@@ -562,37 +562,54 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
               padding: "20px 16px 8px",
             }}
           >
-            <div>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: "var(--text-hero)",
-                  fontWeight: "var(--weight-bold)",
-                  lineHeight: 1,
-                  letterSpacing: "-1.5px",
-                  color: hasScore ? scoreColor(scoreVal) : "var(--text-tertiary)",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {hasScore ? scoreVal : "—"}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 9,
-                  fontWeight: 400,
-                  color: "var(--text-tertiary)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.07em",
-                  marginTop: 4,
-                }}
-              >
-                Position score
-              </span>
-            </div>
+            {/* Left: score number when available, verdict line otherwise */}
+            {hasScore ? (
+              <div>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: "var(--text-hero)",
+                    fontWeight: "var(--weight-bold)",
+                    lineHeight: 1,
+                    letterSpacing: "-1.5px",
+                    color: scoreColor(scoreVal),
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {scoreVal}
+                </span>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 9,
+                    fontWeight: 400,
+                    color: "var(--text-tertiary)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.07em",
+                    marginTop: 4,
+                  }}
+                >
+                  Score
+                </span>
+              </div>
+            ) : (
+              verdictLine && (
+                <div
+                  style={{
+                    fontSize: "var(--text-md)",
+                    color: "var(--text-secondary)",
+                    lineHeight: 1.4,
+                    fontWeight: "var(--weight-regular)",
+                    paddingTop: 2,
+                  }}
+                >
+                  {verdictLine}
+                </div>
+              )
+            )}
 
             <div style={{ textAlign: "end", maxWidth: "52%" }}>
-              {verdictLine && (
+              {hasScore && verdictLine && (
                 <div
                   style={{
                     fontSize: "var(--text-md)",
@@ -611,7 +628,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
                   color: "var(--text-primary)",
                   letterSpacing: "-0.5px",
                   fontVariantNumeric: "tabular-nums",
-                  marginTop: verdictLine ? 4 : 0,
+                  marginTop: hasScore && verdictLine ? 4 : 0,
                   lineHeight: 1,
                 }}
               >
@@ -874,7 +891,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
               {strategy.reasoning && (
                 <>
                   <SectionLabel
-                    label={language === "he" ? "נימוק" : "Advisor reasoning"}
+                    label={language === "he" ? "ניתוח" : "Analysis"}
                     meta={`${language === "he" ? "עודכן" : "updated"} ${timeAgo(strategy.updatedAt)}`}
                   />
                   <p

@@ -11,21 +11,32 @@ interface VerdictBadgeProps {
 const verdictStyles: Record<string, string> = {
   BUY:    "bg-[var(--color-green-bg)] text-[var(--color-green)] border border-[var(--color-green-border)]",
   ADD:    "bg-[var(--color-green-bg)] text-[var(--color-green)] border border-[var(--color-green-border)]",
-  HOLD:   "bg-[var(--color-amber-bg)] text-[var(--color-amber)] border border-[var(--color-amber-border)]",
+  HOLD:   "bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--bg-border)]",
   REDUCE: "bg-[var(--color-amber-bg)] text-[var(--color-amber)] border border-[var(--color-amber-border)]",
   SELL:   "bg-[var(--color-red-bg)] text-[var(--color-red)] border border-[var(--color-red-border)]",
   CLOSE:  "bg-[var(--color-red-bg)] text-[var(--color-red)] border border-[var(--color-red-border)]",
 };
 
+const verdictSymbols: Record<string, string> = {
+  BUY:    "↑",
+  ADD:    "+",
+  HOLD:   "·",
+  REDUCE: "↓",
+  SELL:   "×",
+  CLOSE:  "×",
+};
+
 export function VerdictBadge({ verdict, size = "md" }: VerdictBadgeProps) {
+  const symbol = verdictSymbols[verdict] ?? "";
   return (
     <span
       className={clsx(
-        "inline-flex items-center rounded-full font-bold",
+        "inline-flex items-center gap-0.5 rounded-full font-bold",
         size === "sm" ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs",
         verdictStyles[verdict] ?? "bg-[var(--bg-surface)] text-[var(--text-tertiary)]"
       )}
     >
+      {symbol && <span aria-hidden>{symbol}</span>}
       {verdict}
     </span>
   );
