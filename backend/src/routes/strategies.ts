@@ -48,6 +48,15 @@ interface StrategyListRow {
   timeframe: string;
   positionSizeILS: number;
   positionWeightPct: number;
+  // Optimal-structure fields
+  thesis: string | null;
+  keyRisks: string[];
+  nextEarningsDate: string | null;
+  lastFullReportAt: string | null;
+  lastQuickCheckAt: string | null;
+  lastDailyBriefAt: string | null;
+  evidenceSummary: { supporting: string[]; conflicting: string[]; uncertainties: string[] };
+  //
   entryConditions: string[];
   exitConditions: string[];
   catalysts: Array<{ description: string; expiresAt: string | null; triggered: boolean }>;
@@ -109,6 +118,13 @@ function rowFromDbRecord(
     timeframe: record.timeframe,
     positionSizeILS: record.positionSizeIls,
     positionWeightPct: record.positionWeightPct,
+    thesis: record.thesis,
+    keyRisks: record.keyRisks,
+    nextEarningsDate: record.nextEarningsDate,
+    lastFullReportAt: record.lastFullReportAt,
+    lastQuickCheckAt: record.lastQuickCheckAt,
+    lastDailyBriefAt: record.lastDailyBriefAt,
+    evidenceSummary: record.evidenceSummary,
     entryConditions: record.entryConditions,
     exitConditions: record.exitConditions,
     catalysts: record.catalysts,
@@ -209,6 +225,13 @@ router.get(
         timeframe: s.timeframe,
         positionSizeILS: s.positionSizeILS ?? 0,
         positionWeightPct: s.positionWeightPct ?? 0,
+        thesis: s.thesis ?? null,
+        keyRisks: s.keyRisks ?? [],
+        nextEarningsDate: s.nextEarningsDate ?? null,
+        lastFullReportAt: s.lastFullReportAt ?? null,
+        lastQuickCheckAt: s.lastQuickCheckAt ?? null,
+        lastDailyBriefAt: s.lastDailyBriefAt ?? null,
+        evidenceSummary: s.evidenceSummary ?? { supporting: [], conflicting: [], uncertainties: [] },
         entryConditions: s.entryConditions ?? [],
         exitConditions: s.exitConditions ?? [],
         catalysts: s.catalysts ?? [],

@@ -8,11 +8,28 @@ const FlexibleDateTimeString = z.string().refine(isDateTimeString, {
   message: "Invalid datetime",
 });
 
+export const CatalystCategorySchema = z.enum([
+  "earnings",
+  "product",
+  "regulatory",
+  "macro",
+  "guidance",
+  "other",
+]);
+export const CatalystImportanceSchema = z.enum(["high", "medium", "low"]);
+
 export const StrategyCatalystSchema = z.object({
   description: z.string().max(300),
+  // Window range (preferred). `expiresAt` kept as a legacy alias for windowEnd.
+  windowStart: FlexibleDateTimeString.nullable().optional(),
+  windowEnd: FlexibleDateTimeString.nullable().optional(),
+  category: CatalystCategorySchema.optional().default("other"),
+  importance: CatalystImportanceSchema.optional().default("medium"),
   expiresAt: FlexibleDateTimeString.nullable(),
   triggered: z.boolean(),
 });
+export type CatalystCategory = z.infer<typeof CatalystCategorySchema>;
+export type CatalystImportance = z.infer<typeof CatalystImportanceSchema>;
 
 export const StrategyMetadataSchema = z.object({
   source: z.enum([
@@ -33,6 +50,12 @@ export const StrategyTrackingStatusSchema = z.enum(["active", "muted", "archived
 export const StrategyStanceSchema = z.enum(["candidate", "watch", "pass", "avoid"]);
 export const StrategyUrgencyLabelSchema = z.enum(["low", "medium", "high", "extra_high"]);
 
+export const EvidenceSummarySchema = z.object({
+  supporting: z.array(z.string()).default([]),
+  conflicting: z.array(z.string()).default([]),
+  uncertainties: z.array(z.string()).default([]),
+});
+
 export const StrategySchema = z.object({
   ticker: z.string().regex(/^[A-Z0-9.]{1,12}$/),
   updatedAt: FlexibleDateTimeString,
@@ -43,6 +66,15 @@ export const StrategySchema = z.object({
   timeframe: z.enum(["week", "months", "years", "long_term", "undefined"]),
   positionSizeILS: z.number(),
   positionWeightPct: z.number(),
+  // Optimal-structure fields ────────────────────────────────────────────────
+  thesis: z.string().max(400).nullable().optional(),
+  keyRisks: z.array(z.string().max(200)).max(8).optional().default([]),
+  evidenceSummary: EvidenceSummarySchema.optional(),
+  nextEarningsDate: z.string().nullable().optional(),
+  lastFullReportAt: FlexibleDateTimeString.nullable().optional(),
+  lastQuickCheckAt: FlexibleDateTimeString.nullable().optional(),
+  lastDailyBriefAt: FlexibleDateTimeString.nullable().optional(),
+  // ─────────────────────────────────────────────────────────────────────────
   entryConditions: z
     .array(z.string().max(200))
     .max(5)

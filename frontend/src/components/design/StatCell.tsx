@@ -53,6 +53,9 @@ export function StatCell({ label, value, sub, positive, valueColor: valueColorPr
           color: valueColor,
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "-0.5px",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
         }}
       >
         {value}

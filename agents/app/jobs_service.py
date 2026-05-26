@@ -287,7 +287,10 @@ class JobsService:
             for ticker, strategy, error in results:
                 if strategy is not None:
                     run_id = store.create_analysis_run(job.id, user_id, ticker, job.action)
-                    store.upsert_strategy(user_id, ticker, strategy, guidance_applied=False, run_id=run_id)
+                    store.upsert_strategy(
+                        user_id, ticker, strategy,
+                        guidance_applied=False, run_id=run_id, action=job.action,
+                    )
                     store.write_analyst_reports(user_id, ticker, run_id, job.action, strategy)
                     store.complete_analysis_run(run_id, "completed")
                     strategies.append(strategy)

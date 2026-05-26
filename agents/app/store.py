@@ -29,6 +29,79 @@ from agents.app.schemas import (
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+_MONTHS = {
+    "january": "01", "february": "02", "march": "03", "april": "04",
+    "may": "05", "june": "06", "july": "07", "august": "08",
+    "september": "09", "october": "10", "november": "11", "december": "12",
+    "jan": "01", "feb": "02", "mar": "03", "apr": "04", "jun": "06",
+    "jul": "07", "aug": "08", "sep": "09", "sept": "09", "oct": "10",
+    "nov": "11", "dec": "12",
+}
+
+
+def _to_iso_date(value: Any) -> str | None:
+    """Coerce a loose date string into ISO `YYYY-MM-DD` or None.
+
+    LLM-emitted dates often come as "February 2024", "Q1 2025", "8/14/2025",
+    etc. We accept the common shapes and drop anything else so the DB never
+    sees a malformed DATE.
+    """
+    import re
+
+    if not isinstance(value, str):
+        return None
+    s = value.strip().replace(",", "")
+    if not s:
+        return None
+
+    # ISO already (YYYY-MM-DD)
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
+    if m:
+        y, mo, d = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+        return f"{y}-{mo}-{d}"
+
+    # ISO month-only (YYYY-MM) → first of month
+    m = re.match(r"^(\d{4})-(\d{1,2})$", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2).zfill(2)}-01"
+
+    # US-style M/D/YYYY or D/M/YYYY (ambiguous — assume M/D/YYYY)
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    if m:
+        mo, d, y = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        return f"{y}-{mo}-{d}"
+
+    # "Month YYYY" or "Month DD YYYY"
+    parts = s.lower().split()
+    if parts and parts[0] in _MONTHS:
+        mo = _MONTHS[parts[0]]
+        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 4:
+            return f"{parts[1]}-{mo}-01"
+        if len(parts) >= 3 and parts[1].isdigit() and parts[-1].isdigit() and len(parts[-1]) == 4:
+            try:
+                return f"{parts[-1]}-{mo}-{int(parts[1]):02d}"
+            except ValueError:
+                pass
+
+    return None
+
+
+def _normalise_catalyst(c: dict) -> dict:
+    """Coerce free-form dates and back-fill windowEnd from legacy expiresAt."""
+    window_start = _to_iso_date(c.get("windowStart"))
+    window_end = _to_iso_date(c.get("windowEnd") or c.get("expiresAt"))
+    return {
+        "description": str(c.get("description", ""))[:300],
+        "category": c.get("category") or "other",
+        "windowStart": window_start,
+        "windowEnd": window_end,
+        "importance": c.get("importance") or "medium",
+        # Keep `expiresAt` mirrored so older readers keep working.
+        "expiresAt": window_end,
+        "triggered": bool(c.get("triggered", False)),
+    }
+
+
 def _ts(value: Any) -> str | None:
     if value is None:
         return None
@@ -183,28 +256,57 @@ def upsert_strategy(
     *,
     guidance_applied: bool,
     run_id: str | None = None,
+    action: str | None = None,
 ) -> None:
+    """Write the strategy row from a draft. Persists the new entity fields:
+    thesis, key_risks (separate from avoid_conditions), evidence_summary,
+    next_review_at, next_earnings_date, and per-kind staleness timestamps.
+    """
     now = utc_now()
-    catalysts = [c.model_dump() for c in draft.catalysts]
-    entry_conditions: list[str] = []
-    exit_conditions = draft.invalidation_conditions[:5]
-    avoid_conditions = draft.key_risks[:5]
+    catalysts = [_normalise_catalyst(c.model_dump()) for c in draft.catalysts]
+    entry_conditions = list(draft.entry_conditions or [])[:5]
+    exit_conditions = list(draft.invalidation_conditions or [])[:5]
+    key_risks = list(draft.key_risks or [])[:8]
+    avoid_conditions: list[str] = []  # reserved for explicit "don't add if X"
+    evidence_summary = draft.evidence_summary.model_dump() if draft.evidence_summary else {}
     metadata = {
-        "source": "bootstrap",
+        "source": action or "analysis",
         "status": "provisional",
         "generatedAt": now,
         "userGuidanceApplied": guidance_applied,
     }
+    # Pull nextEarningsDate from the fundamentals report when present.
+    fundamentals = draft.analyst_reports.get("fundamentals") or {}
+    next_earnings_raw = fundamentals.get("nextEarningsDate") if isinstance(fundamentals, dict) else None
+    next_earnings_date = _to_iso_date(next_earnings_raw)
+    # next_review_at is also LLM-emitted; sanitise it the same way.
+    next_review_at = _to_iso_date(draft.next_review_at) if draft.next_review_at else None
+
+    # Per-action staleness timestamps.
+    last_deep_dive_at = now if action == "deep_dive" else None
+    last_full_report_at = now if action in {"full_report", "deep_dive", "bootstrap"} else None
+    last_quick_check_at = now if action == "quick_check" else None
+    last_daily_brief_at = now if action == "daily_brief" else None
+
     execute(
         """
         INSERT INTO strategies (
           user_id, ticker, asset_scope, verdict, confidence, reasoning, timeframe,
-          position_size_ils, position_weight_pct, entry_conditions, exit_conditions,
-          catalysts, bull_case, bear_case, last_deep_dive_at, metadata,
-          action_catalysts, avoid_conditions, asset_class, derived_from_run_id
+          position_size_ils, position_weight_pct,
+          entry_conditions, exit_conditions, catalysts,
+          bull_case, bear_case, last_deep_dive_at, metadata,
+          action_catalysts, avoid_conditions, asset_class, derived_from_run_id,
+          thesis, key_risks, evidence_summary,
+          last_full_report_at, last_quick_check_at, last_daily_brief_at,
+          next_earnings_date, next_review_at
         ) VALUES (
-          %s, %s, 'portfolio', %s, %s, %s, %s, 0, 0, %s::jsonb, %s::jsonb,
-          %s::jsonb, %s, %s, %s, %s::jsonb, '[]'::jsonb, %s::jsonb, 'equity', %s
+          %s, %s, 'portfolio', %s, %s, %s, %s, 0, 0,
+          %s::jsonb, %s::jsonb, %s::jsonb,
+          %s, %s, %s, %s::jsonb,
+          '[]'::jsonb, %s::jsonb, 'equity', %s,
+          %s, %s::jsonb, %s::jsonb,
+          %s, %s, %s,
+          %s, %s
         )
         ON CONFLICT (user_id, ticker) DO UPDATE SET
           asset_scope = EXCLUDED.asset_scope,
@@ -213,15 +315,24 @@ def upsert_strategy(
           reasoning = EXCLUDED.reasoning,
           timeframe = EXCLUDED.timeframe,
           entry_conditions = EXCLUDED.entry_conditions,
+          exit_conditions = EXCLUDED.exit_conditions,
           bull_case = EXCLUDED.bull_case,
           bear_case = EXCLUDED.bear_case,
           catalysts = EXCLUDED.catalysts,
-          exit_conditions = EXCLUDED.exit_conditions,
-          last_deep_dive_at = EXCLUDED.last_deep_dive_at,
           metadata = EXCLUDED.metadata,
           action_catalysts = EXCLUDED.action_catalysts,
           avoid_conditions = EXCLUDED.avoid_conditions,
           derived_from_run_id = EXCLUDED.derived_from_run_id,
+          thesis = EXCLUDED.thesis,
+          key_risks = EXCLUDED.key_risks,
+          evidence_summary = EXCLUDED.evidence_summary,
+          last_deep_dive_at = COALESCE(EXCLUDED.last_deep_dive_at, strategies.last_deep_dive_at),
+          last_full_report_at = COALESCE(EXCLUDED.last_full_report_at, strategies.last_full_report_at),
+          last_quick_check_at = COALESCE(EXCLUDED.last_quick_check_at, strategies.last_quick_check_at),
+          last_daily_brief_at = COALESCE(EXCLUDED.last_daily_brief_at, strategies.last_daily_brief_at),
+          next_earnings_date = COALESCE(EXCLUDED.next_earnings_date, strategies.next_earnings_date),
+          next_review_at = COALESCE(EXCLUDED.next_review_at, strategies.next_review_at),
+          version = strategies.version + 1,
           updated_at = NOW()
         """,
         (
@@ -232,10 +343,18 @@ def upsert_strategy(
             json.dumps(catalysts),
             draft.bull_case,
             draft.bear_case,
-            now,
+            last_deep_dive_at,
             json.dumps(metadata),
             json.dumps(avoid_conditions),
             run_id,
+            draft.thesis,
+            json.dumps(key_risks),
+            json.dumps(evidence_summary),
+            last_full_report_at,
+            last_quick_check_at,
+            last_daily_brief_at,
+            next_earnings_date,
+            next_review_at,
         ),
     )
 
@@ -385,39 +504,60 @@ def write_analyst_reports(
     action: str,
     strategy: TickerStrategyDraft,
 ) -> None:
-    """Write all analyst outputs from a strategy draft to analyst_reports."""
-    now = utc_now()
+    """Write analyst_report rows from a completed strategy draft.
 
-    quick_check_payload = {
-        "decision": "escalate" if strategy.verdict in {"REDUCE", "SELL", "CLOSE"} else "safe",
-        "signals": [strategy.verdict, strategy.confidence, strategy.timeframe],
-        "advisor_summary": strategy.reasoning,
-        "advisor_reasons": strategy.evidence_summary.supporting[:3] + strategy.evidence_summary.conflicting[:2],
-        "escalation_reason": strategy.key_risks[0] if strategy.key_risks else None,
-        "updatedAt": now,
-        "sourceAction": action,
-    }
-    _insert_analyst_report(run_id, user_id, ticker, "quick_check", quick_check_payload)
+    The "strategy" overview row is no longer written — the strategies table is
+    the single source of truth for the strategy overview. Each row written here
+    is one structured specialist payload per analyst_type.
 
-    for analyst_type in ("fundamentals", "technical", "sentiment", "macro", "risk"):
-        payload = strategy.analyst_reports.get(analyst_type)
-        if isinstance(payload, dict) and payload:
-            _insert_analyst_report(run_id, user_id, ticker, analyst_type, payload)
+      quick_check  → "quick_check"
+      daily_brief  → "daily"
+      full_report  → "fundamentals", "technical", "sentiment", "macro", "risk"
+      deep_dive    → full_report + "bull_case", "bear_case", "debate"
+    """
+    ar = strategy.analyst_reports
 
-    if strategy.bull_case:
-        _insert_analyst_report(
-            run_id, user_id, ticker, "bull",
-            {"coreThesis": strategy.bull_case, "arguments": [], "round": 1},
-        )
-    if strategy.bear_case:
-        _insert_analyst_report(
-            run_id, user_id, ticker, "bear",
-            {"coreConcern": strategy.bear_case, "arguments": [], "round": 1},
-        )
+    if action == "quick_check":
+        qc = ar.get("quick_check")
+        if isinstance(qc, dict) and qc:
+            _insert_analyst_report(run_id, user_id, ticker, "quick_check", qc)
+        return
 
-    debate = strategy.analyst_reports.get("debate")
-    if isinstance(debate, dict) and debate:
-        _insert_analyst_report(run_id, user_id, ticker, "debate", debate)
+    if action == "daily_brief":
+        daily = ar.get("daily")
+        if isinstance(daily, dict) and daily:
+            _insert_analyst_report(run_id, user_id, ticker, "daily", daily)
+        return
+
+    if action in {"full_report", "deep_dive", "bootstrap"}:
+        for analyst_type in ("fundamentals", "technical", "sentiment", "macro", "risk"):
+            payload = ar.get(analyst_type)
+            if isinstance(payload, dict) and payload:
+                _insert_analyst_report(run_id, user_id, ticker, analyst_type, payload)
+
+        if action == "deep_dive":
+            for analyst_type in ("bull_case", "bear_case", "debate"):
+                payload = ar.get(analyst_type)
+                if isinstance(payload, dict) and payload:
+                    _insert_analyst_report(run_id, user_id, ticker, analyst_type, payload)
+
+
+def _derive_health_score(strategy: TickerStrategyDraft) -> int:
+    """Compute a 0-100 health score from top-level strategy fields as a fallback."""
+    score = 80
+    if strategy.verdict in {"SELL", "CLOSE"}:
+        score -= 40
+    elif strategy.verdict == "REDUCE":
+        score -= 20
+    elif strategy.verdict in {"BUY", "ADD"}:
+        score += 10
+    if strategy.confidence == "low":
+        score -= 15
+    elif strategy.confidence == "high":
+        score += 5
+    if len(strategy.key_risks) >= 3:
+        score -= 5
+    return max(0, min(100, score))
 
 
 def _insert_analyst_report(
@@ -440,7 +580,14 @@ def insert_feed_item(
     strategies: list[TickerStrategyDraft],
     completed: list[str],
 ) -> None:
-    """Write a feed_items row when a job completes so the feed can read it directly."""
+    """Write a feed_items row when a job completes so the feed can read it directly.
+
+    Each action kind produces a different entry shape:
+      quick_check → compact: score, decision, key_alerts, day_change_pct
+      daily_brief → compact: move_reason, day_change_pct, needs_escalation, deep_dive_queued
+      full_report → full: analystTypes list (no bull/bear), hasBullCase=False
+      deep_dive   → full: analystTypes + hasBullCase/hasBearCase from structured reports
+    """
     if not completed:
         return
 
@@ -450,20 +597,87 @@ def insert_feed_item(
     entries: dict[str, Any] = {}
     for strategy in strategies:
         ticker = strategy.ticker.strip().upper()
-        entries[ticker] = {
+        ar = strategy.analyst_reports
+
+        # Base fields — present for all report kinds
+        entry: dict[str, Any] = {
             "ticker": ticker,
             "mode": action,
             "verdict": strategy.verdict,
             "confidence": strategy.confidence,
             "reasoning": strategy.reasoning,
             "timeframe": strategy.timeframe,
-            "analystTypes": [
-                k for k in ("fundamentals", "technical", "sentiment", "macro", "risk")
-                if k in strategy.analyst_reports
-            ],
-            "hasBullCase": bool(strategy.bull_case),
-            "hasBearCase": bool(strategy.bear_case),
+            "analystTypes": [],
+            "hasBullCase": False,
+            "hasBearCase": False,
         }
+
+        if action == "quick_check":
+            # New camelCase keys from the LangGraph QuickCheckReport schema.
+            qc = ar.get("quick_check") or {}
+            entry["analystTypes"] = ["quick_check"]
+            entry["healthScore"] = qc.get("score") or _derive_health_score(strategy)
+            entry["decision"] = qc.get("decision") or (
+                "escalate" if strategy.verdict in {"REDUCE", "SELL", "CLOSE"} else "safe"
+            )
+            entry["keyAlerts"] = qc.get("thesisHealth") or qc.get("strategy_health") or []
+            entry["dayChangePct"] = qc.get("dayChangePct") or qc.get("day_change_pct")
+            entry["newsHeadline"] = qc.get("newsHeadline") or qc.get("news_headline")
+
+        elif action == "daily_brief":
+            # New camelCase keys from the LangGraph DailyReport schema.
+            daily = ar.get("daily") or {}
+            entry["analystTypes"] = ["daily"]
+            entry["moveReason"] = (
+                daily.get("moveReason") or daily.get("move_reason") or strategy.reasoning[:200]
+            )
+            entry["dayChangePct"] = daily.get("dayChangePct") or daily.get("day_change_pct")
+            entry["sectorChangePct"] = daily.get("sectorChangePct")
+            entry["relativeStrength"] = daily.get("relativeStrength")
+            entry["newsHeadline"] = daily.get("newsHeadline") or daily.get("news_headline")
+            entry["newsUrl"] = daily.get("newsUrl") or daily.get("news_url")
+            entry["volumeFlag"] = daily.get("volumeFlag", daily.get("volume_flag", "normal"))
+            entry["needsEscalation"] = bool(
+                daily.get("escalationSignal")
+                or daily.get("escalation_signal")
+                or strategy.verdict in {"REDUCE", "SELL", "CLOSE"}
+            )
+            entry["escalationReason"] = (
+                strategy.key_risks[0] if entry["needsEscalation"] and strategy.key_risks else None
+            )
+            entry["deepDiveQueued"] = bool(entry["needsEscalation"])
+
+        elif action == "full_report":
+            # Five analyst tabs; no bull/bear
+            entry["analystTypes"] = [
+                k for k in ("fundamentals", "technical", "sentiment", "macro", "risk")
+                if isinstance(ar.get(k), dict) and ar[k]
+            ]
+            entry["hasBullCase"] = False
+            entry["hasBearCase"] = False
+
+        elif action == "deep_dive":
+            # Full analysis + structured bull/bear debate
+            entry["analystTypes"] = [
+                k for k in ("fundamentals", "technical", "sentiment", "macro", "risk")
+                if isinstance(ar.get(k), dict) and ar[k]
+            ]
+            has_bull = isinstance(ar.get("bull_case"), dict) and bool(ar["bull_case"])
+            has_bear = isinstance(ar.get("bear_case"), dict) and bool(ar["bear_case"])
+            # Fall back to string-level bull/bear
+            if not has_bull and strategy.bull_case:
+                has_bull = True
+            if not has_bear and strategy.bear_case:
+                has_bear = True
+            entry["hasBullCase"] = has_bull
+            entry["hasBearCase"] = has_bear
+            # Include debate resolution if available — new camelCase keys.
+            debate = ar.get("debate")
+            if isinstance(debate, dict):
+                entry["debateResolution"] = debate.get("resolution")
+                entry["keySwingFactor"] = debate.get("keySwingFactor") or debate.get("key_swing_factor")
+
+        entries[ticker] = entry
 
     highlights = [
         f"{s.ticker.upper()} {s.verdict} ({s.confidence})"
@@ -472,14 +686,37 @@ def insert_feed_item(
 
     title, summary, kind, tone = _feed_item_meta(action, tickers, strategies, completed)
 
-    daily_brief = None
+    # Build dailyBrief batch-level metadata from aggregated strategy data
+    daily_brief: dict[str, Any] | None = None
     if action == "daily_brief":
+        escalated_count = sum(1 for e in entries.values() if e.get("needsEscalation"))
+        movers = [
+            f"{e['ticker']} {'+' if (e.get('dayChangePct') or 0) > 0 else ''}{(e.get('dayChangePct') or 0):.1f}%"
+            for e in entries.values()
+            if e.get("dayChangePct") is not None
+        ][:4]
+        # Collect macro views from strategies (first one with macro data)
+        macro_view: str | None = None
+        tomorrow_watch: str | None = None
+        for s in strategies:
+            macro = s.analyst_reports.get("macro") or {}
+            if isinstance(macro, dict) and macro.get("macroView"):
+                macro_view = str(macro["macroView"])[:200]
+                break
+        # "tomorrow" — upcoming catalysts from strategies
+        upcoming = []
+        for s in strategies:
+            for cat in s.catalysts[:1]:
+                upcoming.append(f"{s.ticker}: {cat.description[:60]}")
+        if upcoming:
+            tomorrow_watch = "; ".join(upcoming[:3])
+
         daily_brief = {
             "headline": summary,
-            "today": "; ".join(highlights[:2]) if highlights else None,
-            "tomorrow": None,
-            "marketView": None,
-            "securityNote": None,
+            "today": "; ".join(movers) if movers else "; ".join(highlights[:3]),
+            "tomorrow": tomorrow_watch,
+            "marketView": macro_view,
+            "securityNote": f"{escalated_count} position{'s' if escalated_count != 1 else ''} flagged for attention." if escalated_count else None,
             "dashboardPath": "/reports",
         }
 
@@ -523,25 +760,47 @@ def _feed_item_meta(
         title = "Daily brief"
         escalated = sum(1 for s in strategies if s.verdict in {"REDUCE", "SELL", "CLOSE"})
         summary = (
-            f"{escalated} position{'s' if escalated != 1 else ''} need closer attention."
+            f"{escalated} position{'s' if escalated != 1 else ''} flagged — closer look recommended."
             if escalated else
-            f"Daily brief completed across {count} position{'s' if count != 1 else ''}."
+            f"Portfolio steady across {count} position{'s' if count != 1 else ''}."
         )
         kind = "daily_brief"
         tone = "rose" if has_negative else "sky"
+
+    elif action == "quick_check":
+        title = f"{primary} · Quick check"
+        qc = strategies[0].analyst_reports.get("quick_check") if strategies else {}
+        decision = (qc or {}).get("decision", "safe") if isinstance(qc, dict) else "safe"
+        summary = (
+            strategies[0].reasoning[:160]
+            if strategies else f"Quick check completed for {primary}."
+        )
+        kind = "quick_check"
+        tone = "rose" if decision == "escalate" else ("amber" if decision == "watch" else "emerald")
+
     elif action == "deep_dive":
-        title = f"{primary} deep dive"
-        summary = strategies[0].reasoning if strategies else f"Deep dive refreshed for {primary}."
+        title = f"{primary} · Deep dive"
+        summary = (
+            strategies[0].thesis[:180]
+            if strategies and strategies[0].thesis else
+            strategies[0].reasoning[:180] if strategies else f"Deep dive completed for {primary}."
+        )
         kind = "deep_dive"
         tone = "rose" if has_negative else ("emerald" if has_positive else "amber")
-    elif action == "quick_check":
-        title = f"{primary} quick check"
-        summary = strategies[0].reasoning if strategies else f"Quick check completed for {primary}."
-        kind = "quick_check"
-        tone = "rose" if has_negative else "emerald"
+
+    elif action == "full_report":
+        title = "Full report"
+        summary = (
+            f"{count} position{'s' if count != 1 else ''} refreshed — "
+            f"{sum(1 for s in strategies if s.verdict in {'BUY','ADD'})} positive, "
+            f"{sum(1 for s in strategies if s.verdict in {'REDUCE','SELL','CLOSE'})} flagged."
+        )
+        kind = "report"
+        tone = "rose" if has_negative else ("emerald" if has_positive else "amber")
+
     else:
-        title = "Full report" if action == "full_report" else action.replace("_", " ").title()
-        summary = f"Full report refreshed across {count} ticker{'s' if count != 1 else ''}."
+        title = action.replace("_", " ").title()
+        summary = f"Analysis completed across {count} ticker{'s' if count != 1 else ''}."
         kind = "report"
         tone = "rose" if has_negative else ("emerald" if has_positive else "amber")
 

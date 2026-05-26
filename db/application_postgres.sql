@@ -100,6 +100,21 @@ CREATE INDEX IF NOT EXISTS idx_strategies_next_review
   WHERE next_review_at IS NOT NULL;
 ALTER TABLE strategies
   ADD COLUMN IF NOT EXISTS derived_from_run_id UUID;
+-- New entity fields (optimal-structure rollout)
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS thesis TEXT;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS key_risks JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS evidence_summary JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS last_full_report_at TIMESTAMPTZ;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS last_quick_check_at TIMESTAMPTZ;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS last_daily_brief_at TIMESTAMPTZ;
+ALTER TABLE strategies
+  ADD COLUMN IF NOT EXISTS next_earnings_date DATE;
 
 -- ── Report artifacts ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS report_artifacts (

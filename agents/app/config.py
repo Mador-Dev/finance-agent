@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     # Per-ticker agent timeout in seconds. Guards against agents that hang
     # waiting for an API response or running too many subagent steps.
     ticker_timeout_seconds: int = Field(default=180, alias="TICKER_TIMEOUT_SECONDS")
+    # Tavily Search API key — used by all analyst subagents for live market data.
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
 
 
 @lru_cache(maxsize=1)

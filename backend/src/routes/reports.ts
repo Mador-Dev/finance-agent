@@ -6,6 +6,7 @@ import { readFeedPage } from "../services/feedService.js";
 import { loadUserStrategy } from "../services/strategyAccess.js";
 import { readReportArtifact } from "../services/reportArtifactStore.js";
 import { readLatestAnalystReport } from "../services/analystReportStore.js";
+import { readStrategy } from "../services/strategyStore.js";
 
 const router = Router();
 
@@ -33,6 +34,8 @@ const VALID_REPORT_TYPES = [
   "bear_case",
   "strategy",
   "quick_check",
+  "daily",
+  "debate",
 ];
 
 const BATCH_ID_REGEX = /^[a-zA-Z0-9_]{1,60}$/;
@@ -93,7 +96,41 @@ router.get(
       return;
     }
 
-    // Prefer analyst_reports (new), fall back to report_artifacts (legacy data).
+    // For the "strategy" overview tab, the strategies table is the source of
+    // truth — we no longer write a redundant analyst_reports row for it.
+    if (reportType === "strategy") {
+      const strategy = await readStrategy(ws.userId, ticker);
+      if (!strategy) {
+        res.status(404).json({ error: "Strategy not found" });
+        return;
+      }
+      res.json({
+        batchId,
+        ticker,
+        reportType,
+        content: {
+          thesis: strategy.thesis,
+          verdict: strategy.verdict,
+          confidence: strategy.confidence,
+          reasoning: strategy.reasoning,
+          timeframe: strategy.timeframe,
+          catalysts: strategy.catalysts,
+          bullCase: strategy.bullCase,
+          bearCase: strategy.bearCase,
+          keyRisks: strategy.keyRisks,
+          entryConditions: strategy.entryConditions,
+          exitConditions: strategy.exitConditions,
+          evidenceSummary: strategy.evidenceSummary,
+          nextReviewAt: strategy.nextReviewAt,
+          nextEarningsDate: strategy.nextEarningsDate,
+          lastFullReportAt: strategy.lastFullReportAt,
+          lastDeepDiveAt: strategy.lastDeepDiveAt,
+        },
+      });
+      return;
+    }
+
+    // All other tabs: prefer analyst_reports (new), fall back to legacy report_artifacts.
     const content =
       (await readLatestAnalystReport(ws.userId, ticker, reportType)) ??
       (await readReportArtifact(ws.userId, ticker, reportType));

@@ -7,9 +7,13 @@ interface HeroStatCardProps {
   portfolioScore: number | null;
   /** Optional one-liner prose beneath the score bar (e.g., "Mostly on track…") */
   description?: string;
+  /** Today's day-change % — rendered inline inside the card */
+  todayPct?: number | null;
+  /** Cumulative return % — rendered as "Total Return" inside the card */
+  totalReturnPct?: number | null;
 }
 
-export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, description }: HeroStatCardProps) {
+export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, description, todayPct, totalReturnPct }: HeroStatCardProps) {
   const hasScore = portfolioScore !== null && Number.isFinite(portfolioScore);
   const tintScore = hasScore ? (portfolioScore as number) : 70;
 
@@ -25,6 +29,20 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
       ? "var(--color-red)"
       : "var(--text-secondary)";
 
+  const todayColor =
+    todayPct == null || todayPct === 0 ? "var(--text-tertiary)"
+    : todayPct > 0 ? "var(--color-green)" : "var(--color-red)";
+  const todayFmt =
+    todayPct == null || todayPct === 0 ? "—"
+    : `${todayPct >= 0 ? "+" : ""}${todayPct.toFixed(2)}%`;
+
+  const retColor =
+    totalReturnPct == null || totalReturnPct === 0 ? "var(--text-tertiary)"
+    : totalReturnPct > 0 ? "var(--color-green)" : "var(--color-red)";
+  const retFmt =
+    totalReturnPct == null || totalReturnPct === 0 ? "—"
+    : `${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`;
+
   return (
     <div
       style={{
@@ -35,7 +53,6 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
         margin: "0 16px",
         boxShadow: `0 6px 0 ${scoreShadow}`,
         position: "relative",
-        overflow: "hidden",
       }}
     >
 
@@ -50,8 +67,22 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
           zIndex: 1,
         }}
       >
-        {/* Left: total value + pnl */}
+        {/* Left: label + total value + Today / Total Return */}
         <div>
+          {/* "Portfolio Value" label */}
+          <div
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--text-tertiary)",
+              marginBottom: 6,
+            }}
+          >
+            Portfolio Value
+          </div>
+          {/* Cash amount */}
           <div
             style={{
               fontSize: 18,
@@ -64,26 +95,59 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
           >
             {value}
           </div>
-          {pnlLine && (
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: "#111827",
-                fontVariantNumeric: "tabular-nums",
-                marginTop: 6,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 9px",
-                borderRadius: 999,
-                border: "1.5px solid rgba(17,24,39,0.12)",
-                background: "rgba(255,255,255,0.72)",
-              }}
-            >
-              {pnlLine}
+          {/* Today + Total Return — inline mini stats */}
+          <div style={{ display: "flex", gap: 18, marginTop: 12 }}>
+            <div>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.07em",
+                  color: "var(--text-tertiary)",
+                  marginBottom: 3,
+                }}
+              >
+                Today
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: todayColor,
+                  fontVariantNumeric: "tabular-nums",
+                  letterSpacing: "-0.3px",
+                }}
+              >
+                {todayFmt}
+              </div>
             </div>
-          )}
+            <div>
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.07em",
+                  color: "var(--text-tertiary)",
+                  marginBottom: 3,
+                }}
+              >
+                Total Return
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: retColor,
+                  fontVariantNumeric: "tabular-nums",
+                  letterSpacing: "-0.3px",
+                }}
+              >
+                {retFmt}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Right: score widget */}
@@ -91,38 +155,12 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
           style={{
             minWidth: 108,
             alignSelf: "flex-start",
-            background: "var(--bg-surface)",
-            border: `1px solid ${hasScore ? scoreBorder(tintScore) : "var(--bg-border)"}`,
+            background: "transparent",
+            border: "0.5px solid var(--bg-border)",
             borderRadius: "var(--radius-xl)",
-            padding: "10px 12px 10px",
-            position: "relative",
-            overflow: "hidden",
+            padding: "10px 12px",
           }}
         >
-          {/* Color-coded top accent line */}
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              height: 2,
-              background: hasScore ? scoreTextColor : "var(--bg-border-mid)",
-              borderRadius: "var(--radius-xl) var(--radius-xl) 0 0",
-            }}
-          />
-          <div
-            style={{
-              fontSize: 8,
-              fontWeight: 700,
-              color: "var(--text-tertiary)",
-              textTransform: "uppercase",
-              letterSpacing: "0.12em",
-              marginBottom: 6,
-            }}
-          >
-            Portfolio Score
-          </div>
           <div
             style={{
               fontSize: 32,
@@ -140,10 +178,11 @@ export function HeroStatCard({ value, pnlLine, pnlPositive, portfolioScore, desc
               marginTop: 7,
               display: "inline-flex",
               alignItems: "center",
-              padding: "2px 7px",
+              padding: "2px 8px",
               borderRadius: "var(--radius-pill)",
-              background: hasScore ? scoreBg(tintScore) : "var(--bg-surface-hover)",
-              fontSize: 9,
+              background: "var(--bg-surface)",
+              border: "0.5px solid var(--bg-border)",
+              fontSize: "var(--text-2xs)",
               fontWeight: 700,
               color: hasScore ? scoreTextColor : "var(--text-tertiary)",
               textTransform: "uppercase",

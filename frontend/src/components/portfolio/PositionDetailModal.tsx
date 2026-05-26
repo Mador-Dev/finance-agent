@@ -9,11 +9,11 @@ import { triggerJob } from "../../api/jobs";
 import { useToastStore } from "../../store/toastStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { t, tConfidence } from "../../store/i18n";
-import { formatILS, formatPct, timeAgo } from "../../utils/format";
-import { scoreColor } from "../../utils/today/scoreColor";
+import { formatILS, timeAgo } from "../../utils/format";
+import { verdictSentence } from "../../utils/advisory";
 import type { PositionRow, VerdictRow, Verdict, ClosedPositionRecord } from "../../types/api";
 import { Spinner } from "../ui/Spinner";
-import { ActionBadge } from "../design/ActionBadge";
+
 import { ScoreBar } from "../design/HeroStatCard";
 import { StatCell } from "../design/StatCell";
 import { ThesisSection } from "./ThesisSection";
@@ -34,14 +34,7 @@ interface PositionDetailModalProps {
 
 type Timeframe = "1D" | "1W" | "1M" | "3M" | "1Y";
 
-const VERDICT_LINE: Record<Verdict, string> = {
-  BUY: "Add or initiate.",
-  ADD: "Add to position.",
-  HOLD: "Hold steady.",
-  REDUCE: "Trim the position.",
-  SELL: "Reduce or exit.",
-  CLOSE: "Close out.",
-};
+
 
 const VERDICT_CTA: Partial<Record<Verdict, string>> = {
   BUY: "Deep dive before adding",
@@ -74,6 +67,15 @@ function ctaBorderColor(verdict?: Verdict): string {
     case "REDUCE": return "var(--color-amber-border)";
     case "SELL": case "CLOSE": return "var(--color-red-border)";
     default: return "transparent";
+  }
+}
+
+function verdictFg(verdict?: Verdict): string {
+  switch (verdict) {
+    case "BUY": case "ADD":    return "var(--color-green)";
+    case "REDUCE":             return "var(--color-amber)";
+    case "SELL": case "CLOSE": return "var(--color-red)";
+    default:                   return "var(--text-primary)";
   }
 }
 
@@ -394,7 +396,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
   const hasScore = score !== undefined && Number.isFinite(score);
   const scoreVal = score ?? 0;
   const verdictType = verdict?.verdict ?? strategy?.verdict;
-  const verdictLine = verdictType ? VERDICT_LINE[verdictType] : null;
+  const verdictLine = verdictType ? verdictSentence(verdictType) : null;
   const ctaLabel = verdictType ? (VERDICT_CTA[verdictType] ?? null) : null;
 
   const dayChangePct = position.dayChangePct ?? 0;
@@ -461,19 +463,23 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
         background: "rgba(0,0,0,0.65)",
         backdropFilter: "blur(4px)",
         display: "flex",
-        alignItems: "stretch",
+        alignItems: "flex-start",
         justifyContent: "center",
+        padding: "12px",
       }}
     >
       <div
         style={{
           width: "100%",
           maxWidth: 560,
+          maxHeight: "calc(100vh - 24px)",
           background: "var(--bg-base)",
           display: "flex",
           flexDirection: "column",
-          maxHeight: "100vh",
           overflow: "hidden",
+          borderRadius: 16,
+          border: "1px solid rgba(255,255,255,0.18)",
+          boxShadow: "0 0 0 1px rgba(255,255,255,0.06), 0 24px 80px rgba(0,0,0,0.85), 0 8px 32px rgba(0,0,0,0.6)",
         }}
       >
         {/* ── Header ── */}
@@ -524,8 +530,6 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
             </div>
           </div>
 
-          {verdictType && <ActionBadge verdict={verdictType} score={score} />}
-
           <button
             type="button"
             onClick={() => setEditMode((m) => !m)}
@@ -552,93 +556,130 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
         {/* ── Scrollable body ── */}
         <div style={{ flex: 1, overflowY: "auto" }}>
 
-          {/* Position hero — score (when available) + current value */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              gap: 16,
-              padding: "20px 16px 8px",
-            }}
-          >
-            {/* Left: score number when available, verdict line otherwise */}
-            {hasScore ? (
+          {/* ═══ Strategy: verdict + analysis first ═══ */}
+          <div style={{ padding: "16px 16px 0" }}>
+
+            {/* Verdict field label */}
+            <div
+              style={{
+                fontSize: "var(--text-2xs)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                color: "var(--text-tertiary)",
+                fontWeight: 400,
+                marginBottom: 6,
+              }}
+            >
+              {language === "he" ? "המלצה" : "Verdict"}
+            </div>
+
+            {/* Verdict row — big keyword + sentence left, timestamp right */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 8,
+              }}
+            >
               <div>
+                {verdictType && (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: verdictLine ? 4 : 0 }}>
+                    <span
+                      style={{
+                        fontSize: "var(--text-xl)",
+                        fontWeight: "var(--weight-bold)",
+                        color: verdictFg(verdictType),
+                        fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                        letterSpacing: "-0.5px",
+                      }}
+                    >
+                      {verdictType}
+                    </span>
+                    {verdictLine && (
+                      <span
+                        style={{
+                          fontSize: "var(--text-md)",
+                          color: "var(--text-secondary)",
+                          lineHeight: 1.4,
+                          fontWeight: "var(--weight-regular)",
+                        }}
+                      >
+                        {verdictLine}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {strategy?.updatedAt && (
                 <span
                   style={{
-                    display: "block",
-                    fontSize: "var(--text-hero)",
-                    fontWeight: "var(--weight-bold)",
-                    lineHeight: 1,
-                    letterSpacing: "-1.5px",
-                    color: scoreColor(scoreVal),
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {scoreVal}
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: 9,
-                    fontWeight: 400,
+                    fontSize: "var(--text-2xs)",
                     color: "var(--text-tertiary)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.07em",
-                    marginTop: 4,
+                    whiteSpace: "nowrap",
+                    paddingTop: 4,
+                    flexShrink: 0,
                   }}
                 >
-                  Score
+                  {timeAgo(strategy.updatedAt)}
+                </span>
+              )}
+            </div>
+
+            {/* Analysis snippet — loading state or text */}
+            {(strategyLoading && !strategy) ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0 14px" }}>
+                <Spinner size="sm" />
+                <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+                  {language === "he" ? "טוען ניתוח…" : "Loading analysis…"}
                 </span>
               </div>
-            ) : (
-              verdictLine && (
-                <div
-                  style={{
-                    fontSize: "var(--text-md)",
-                    color: "var(--text-secondary)",
-                    lineHeight: 1.4,
-                    fontWeight: "var(--weight-regular)",
-                    paddingTop: 2,
-                  }}
-                >
-                  {verdictLine}
-                </div>
-              )
-            )}
-
-            <div style={{ textAlign: "end", maxWidth: "52%" }}>
-              {hasScore && verdictLine && (
-                <div
-                  style={{
-                    fontSize: "var(--text-md)",
-                    color: "var(--text-secondary)",
-                    lineHeight: 1.4,
-                    fontWeight: "var(--weight-regular)",
-                  }}
-                >
-                  {verdictLine}
-                </div>
-              )}
-              <div
+            ) : strategy?.reasoning ? (
+              <p
                 style={{
-                  fontSize: 18,
-                  fontWeight: "var(--weight-bold)",
-                  color: "var(--text-primary)",
-                  letterSpacing: "-0.5px",
-                  fontVariantNumeric: "tabular-nums",
-                  marginTop: hasScore && verdictLine ? 4 : 0,
-                  lineHeight: 1,
+                  margin: "0 0 14px",
+                  fontSize: "var(--text-md)",
+                  lineHeight: 1.55,
+                  color: "var(--text-secondary)",
+                  fontWeight: "var(--weight-regular)",
                 }}
               >
-                {formatILS(position.currentILS)}
-              </div>
-            </div>
+                {twoSentences(strategy.reasoning)}
+              </p>
+            ) : null}
           </div>
 
+          {/* Bull / Bear — only when strategy loaded */}
+          {strategy && (strategy.bullCase || strategy.bearCase) && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+                padding: "0 16px 16px",
+              }}
+            >
+              <BullBearCard
+                label={language === "he" ? "בעד" : "Bull"}
+                color="var(--color-green)"
+                text={strategy.bullCase}
+              />
+              <BullBearCard
+                label={language === "he" ? "נגד" : "Bear"}
+                color="var(--color-red)"
+                text={strategy.bearCase}
+              />
+            </div>
+          )}
+
+          <Divider />
+
+          {/* ═══ Position snapshot ═══ */}
+
+          {/* Score bar + breakdown */}
           {hasScore && (
-            <div style={{ paddingBottom: scoreBreakdown ? 4 : 12 }}>
+            <div style={{ paddingTop: 12, paddingBottom: scoreBreakdown ? 4 : 0 }}>
               <ScoreBar score={scoreVal} />
             </div>
           )}
@@ -646,9 +687,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
             <ScoreBreakdown breakdown={scoreBreakdown} score={scoreVal} />
           )}
 
-          <Divider />
-
-          {/* 2×2 stats — financial snapshot */}
+          {/* 2×2 financial stats */}
           <div
             style={{
               display: "grid",
@@ -660,7 +699,7 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
             <StatCell
               label={t("currentValue", language)}
               value={formatILS(position.currentILS)}
-              sub={`${formatILS(position.livePriceILS)} / share`}
+              sub={`${formatILS(position.livePriceILS)} / share · ${position.plPct >= 0 ? "+" : ""}${position.plPct.toFixed(1)}%`}
               positive={position.plPct > 0 ? true : position.plPct < 0 ? false : null}
             />
             <StatCell
@@ -680,43 +719,9 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
             />
           </div>
 
-          {/* Today + All-time P/L row */}
-          <div style={{ padding: "0 16px 12px", display: "flex", flexWrap: "wrap", gap: 16 }}>
-            {hasDayChange && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span
-                  style={{
-                    fontSize: "var(--text-2xs)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-tertiary)",
-                    fontWeight: "var(--weight-regular)",
-                  }}
-                >
-                  {language === "he" ? "היום" : "Today"}
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    fontWeight: "var(--weight-bold)",
-                    color: dayPositive ? "var(--color-green)" : "var(--color-red)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {dayPositive ? "+" : ""}{dayChangePct.toFixed(2)}%
-                </span>
-                <span
-                  style={{
-                    fontSize: "var(--text-xs)",
-                    color: "var(--text-tertiary)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {dayPositive ? "+" : ""}{formatILS(Math.abs(dayChangeILS))}
-                </span>
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Today P/L */}
+          {hasDayChange && (
+            <div style={{ padding: "0 16px 12px", display: "flex", alignItems: "center", gap: 8 }}>
               <span
                 style={{
                   fontSize: "var(--text-2xs)",
@@ -726,17 +731,17 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
                   fontWeight: "var(--weight-regular)",
                 }}
               >
-                {language === "he" ? "הכל" : "All-time"}
+                {language === "he" ? "היום" : "Today"}
               </span>
               <span
                 style={{
                   fontSize: "var(--text-sm)",
                   fontWeight: "var(--weight-bold)",
-                  color: position.plPct >= 0 ? "var(--color-green)" : "var(--color-red)",
+                  color: dayPositive ? "var(--color-green)" : "var(--color-red)",
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {formatPct(position.plPct)}
+                {dayPositive ? "+" : ""}{dayChangePct.toFixed(2)}%
               </span>
               <span
                 style={{
@@ -745,10 +750,10 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {position.plPct >= 0 ? "+" : ""}{formatILS(Math.abs(position.plILS))}
+                {dayPositive ? "+" : ""}{formatILS(Math.abs(dayChangeILS))}
               </span>
             </div>
-          </div>
+          )}
 
           {/* ── Edit mode inline ── */}
           {editMode && (
@@ -876,85 +881,9 @@ export function PositionDetailModal({ position, verdict, score, onClose, onDelet
             onUpdate={updateGuidance}
           />
 
-          {/* ── Strategy content ── */}
-          {(strategyLoading && !strategy) && (
-            <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
-              <Spinner size="sm" />
-            </div>
-          )}
-
-          {strategy && (
-            <>
-              <Divider />
-
-              {/* Reasoning */}
-              {strategy.reasoning && (
-                <>
-                  <SectionLabel
-                    label={language === "he" ? "ניתוח" : "Analysis"}
-                    meta={`${language === "he" ? "עודכן" : "updated"} ${timeAgo(strategy.updatedAt)}`}
-                  />
-                  <p
-                    style={{
-                      padding: "0 16px 14px",
-                      fontSize: "var(--text-md)",
-                      lineHeight: 1.5,
-                      color: "var(--text-secondary)",
-                      fontWeight: "var(--weight-regular)",
-                    }}
-                  >
-                    {twoSentences(strategy.reasoning)}
-                  </p>
-                </>
-              )}
-
-              {/* Bull / Bear 2-col */}
-              {(strategy.bullCase || strategy.bearCase) && (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 8,
-                    padding: "0 16px 16px",
-                  }}
-                >
-                  <BullBearCard
-                    label={language === "he" ? "בעד" : "Bull"}
-                    color="var(--color-green)"
-                    text={strategy.bullCase}
-                  />
-                  <BullBearCard
-                    label={language === "he" ? "נגד" : "Bear"}
-                    color="var(--color-red)"
-                    text={strategy.bearCase}
-                  />
-                </div>
-              )}
-
-              {/* Conditions */}
-              {(strategy.entryConditions.length + strategy.exitConditions.length) > 0 && (
-                <>
-                  <Divider />
-                  <SectionLabel
-                    label={language === "he" ? "תנאים" : "Conditions"}
-                    meta={String(strategy.entryConditions.length + strategy.exitConditions.length)}
-                  />
-                  <div style={{ padding: "0 16px 16px" }}>
-                    {strategy.entryConditions.map((c, i) => (
-                      <ConditionRow key={`e-${i}`} kind="entry" text={c} label={language === "he" ? "כניסה" : "ENTRY"} verdict={verdictType} />
-                    ))}
-                    {strategy.exitConditions.map((c, i) => (
-                      <ConditionRow key={`x-${i}`} kind="exit" text={c} label={language === "he" ? "יציאה" : "EXIT"} verdict={verdictType} />
-                    ))}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
           <Divider />
 
-          {/* ── Price chart — supporting context, at the bottom ── */}
+          {/* ── Price chart ── */}
           <div style={{ padding: "16px 16px 0" }}>
             <div
               style={{

@@ -83,8 +83,22 @@ export interface PortfolioResponse {
  positions: PositionRow[];
 }
 
+export type CatalystCategory =
+  | "earnings"
+  | "product"
+  | "regulatory"
+  | "macro"
+  | "guidance"
+  | "other";
+export type CatalystImportance = "high" | "medium" | "low";
+
 export interface StrategyCatalyst {
  description: string;
+ category?: CatalystCategory;
+ windowStart?: string | null;
+ windowEnd?: string | null;
+ importance?: CatalystImportance;
+ // Legacy alias for windowEnd — kept for back-compat. UI reads windowEnd ?? expiresAt.
  expiresAt: string | null;
  triggered: boolean;
 }
@@ -93,6 +107,12 @@ export type StrategyScope = "portfolio" | "tracking";
 export type TrackingStatus = "active" | "muted" | "archived";
 export type TrackingStance = "candidate" | "watch" | "pass" | "avoid";
 export type UrgencyLabel = "low" | "medium" | "high" | "extra_high";
+
+export interface EvidenceSummary {
+ supporting: string[];
+ conflicting: string[];
+ uncertainties: string[];
+}
 
 export interface StrategyRow {
  ticker: string;
@@ -105,6 +125,15 @@ export interface StrategyRow {
  timeframe: string;
  positionSizeILS: number;
  positionWeightPct: number;
+ // Optimal-structure additions
+ thesis?: string | null;
+ keyRisks?: string[];
+ evidenceSummary?: EvidenceSummary;
+ nextEarningsDate?: string | null;
+ lastFullReportAt?: string | null;
+ lastQuickCheckAt?: string | null;
+ lastDailyBriefAt?: string | null;
+ //
  entryConditions: string[];
  exitConditions: string[];
  catalysts: StrategyCatalyst[];
@@ -304,6 +333,29 @@ export interface FeedItemEntry {
  actionCatalysts?: StrategyCatalyst[];
  avoidConditions?: string[];
  nextReviewAt?: string | null;
+ // ── Quick check specific ───────────────────────────────────────────────────
+ /** Health score 0-100 from the quick_check agent */
+ healthScore?: number | null;
+ /** Decision from the quick_check agent */
+ decision?: "safe" | "watch" | "escalate" | null;
+ /** Short alerts from strategy health check */
+ keyAlerts?: string[] | null;
+ // ── Daily brief specific ───────────────────────────────────────────────────
+ /** Why the price moved today */
+ newsHeadline?: string | null;
+ /** URL of the top news article */
+ newsUrl?: string | null;
+ /** Today's volume relative to average */
+ volumeFlag?: "normal" | "elevated" | "low" | null;
+ /** Today's sector ETF change % (for relative strength context) */
+ sectorChangePct?: number | null;
+ /** Whether the ticker is outperforming / in-line / underperforming its sector today */
+ relativeStrength?: "outperforming" | "inline" | "underperforming" | null;
+ // ── Deep dive specific ─────────────────────────────────────────────────────
+ /** Coordinator's resolution of the bull/bear debate */
+ debateResolution?: string | null;
+ /** The single most important unknown driving the outcome */
+ keySwingFactor?: string | null;
 }
 
 export interface FeedItem {

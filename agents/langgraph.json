@@ -3,7 +3,11 @@
     "./agents"
   ],
   "graphs": {
-    "bootstrap_strategy_agent": "./agents/bootstrap_agent/deep_agent.py:build_bootstrap_deep_agent"
+    "bootstrap_strategy_agent": "./agents/bootstrap_agent/workflow.py:GRAPH",
+    "quick_check_agent": "./agents/quick_check_agent/workflow.py:GRAPH",
+    "daily_brief_agent": "./agents/daily_brief_agent/workflow.py:GRAPH",
+    "full_report_agent": "./agents/full_report_agent/workflow.py:GRAPH",
+    "deep_dive_agent": "./agents/deep_dive_agent/workflow.py:GRAPH"
   },
   "env": "./agents/.env"
 }

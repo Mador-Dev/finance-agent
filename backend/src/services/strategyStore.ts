@@ -25,6 +25,12 @@ export type {
   StrategyVerdict,
 } from "../db/entities/StrategyEntity.js";
 
+export interface EvidenceSummary {
+  supporting: string[];
+  conflicting: string[];
+  uncertainties: string[];
+}
+
 export interface StrategyRecord {
   userId: string;
   ticker: string;
@@ -37,6 +43,15 @@ export interface StrategyRecord {
   timeframe: string;
   positionSizeIls: number;
   positionWeightPct: number;
+  // Optimal-structure additions
+  thesis: string | null;
+  keyRisks: string[];
+  evidenceSummary: EvidenceSummary;
+  nextEarningsDate: string | null;
+  lastFullReportAt: string | null;
+  lastQuickCheckAt: string | null;
+  lastDailyBriefAt: string | null;
+  //
   entryConditions: string[];
   exitConditions: string[];
   catalysts: StrategyCatalystJson[];
@@ -71,6 +86,13 @@ export interface WriteStrategyInput {
   timeframe: string;
   positionSizeIls?: number;
   positionWeightPct?: number;
+  thesis?: string | null;
+  keyRisks?: string[];
+  evidenceSummary?: EvidenceSummary;
+  nextEarningsDate?: string | null;
+  lastFullReportAt?: string | null;
+  lastQuickCheckAt?: string | null;
+  lastDailyBriefAt?: string | null;
   entryConditions?: string[];
   exitConditions?: string[];
   catalysts?: StrategyCatalystJson[];
@@ -104,6 +126,13 @@ interface StrategyRow {
   timeframe: string;
   position_size_ils: string;
   position_weight_pct: string;
+  thesis: string | null;
+  key_risks: string[];
+  evidence_summary: Record<string, unknown> | null;
+  next_earnings_date: Date | string | null;
+  last_full_report_at: Date | string | null;
+  last_quick_check_at: Date | string | null;
+  last_daily_brief_at: Date | string | null;
   entry_conditions: string[];
   exit_conditions: string[];
   catalysts: StrategyCatalystJson[];
@@ -144,6 +173,12 @@ function toNumberOrNull(value: string | null | undefined): number | null {
 }
 
 function fromRow(row: StrategyRow): StrategyRecord {
+  const ev = (row.evidence_summary ?? {}) as Record<string, unknown>;
+  const evidenceSummary: EvidenceSummary = {
+    supporting: Array.isArray(ev.supporting) ? (ev.supporting as string[]) : [],
+    conflicting: Array.isArray(ev.conflicting) ? (ev.conflicting as string[]) : [],
+    uncertainties: Array.isArray(ev.uncertainties) ? (ev.uncertainties as string[]) : [],
+  };
   return {
     userId: row.user_id,
     ticker: row.ticker,
@@ -156,6 +191,13 @@ function fromRow(row: StrategyRow): StrategyRecord {
     timeframe: row.timeframe,
     positionSizeIls: Number(row.position_size_ils),
     positionWeightPct: Number(row.position_weight_pct),
+    thesis: row.thesis,
+    keyRisks: Array.isArray(row.key_risks) ? row.key_risks : [],
+    evidenceSummary,
+    nextEarningsDate: toIso(row.next_earnings_date),
+    lastFullReportAt: toIso(row.last_full_report_at),
+    lastQuickCheckAt: toIso(row.last_quick_check_at),
+    lastDailyBriefAt: toIso(row.last_daily_brief_at),
     entryConditions: Array.isArray(row.entry_conditions) ? row.entry_conditions : [],
     exitConditions: Array.isArray(row.exit_conditions) ? row.exit_conditions : [],
     catalysts: Array.isArray(row.catalysts) ? row.catalysts : [],
@@ -183,6 +225,8 @@ function fromRow(row: StrategyRow): StrategyRecord {
 const SELECT_COLUMNS = `
   user_id, ticker, version, asset_scope, tracking_status, verdict, confidence,
   reasoning, timeframe, position_size_ils, position_weight_pct,
+  thesis, key_risks, evidence_summary, next_earnings_date,
+  last_full_report_at, last_quick_check_at, last_daily_brief_at,
   entry_conditions, exit_conditions, catalysts, bull_case, bear_case,
   last_deep_dive_at, deep_dive_triggered_by, metadata, stance,
   potential_score, urgency_score, urgency_label, portfolio_fit_score,
@@ -274,6 +318,13 @@ export async function writeStrategy(input: WriteStrategyInput): Promise<WriteStr
       JSON.stringify(input.avoidConditions ?? []),
       input.nextReviewAt ?? null,
       input.assetClass ?? "equity",
+      input.thesis ?? null,
+      JSON.stringify(input.keyRisks ?? []),
+      JSON.stringify(input.evidenceSummary ?? { supporting: [], conflicting: [], uncertainties: [] }),
+      input.nextEarningsDate ?? null,
+      input.lastFullReportAt ?? null,
+      input.lastQuickCheckAt ?? null,
+      input.lastDailyBriefAt ?? null,
     ];
 
     const rows = (await manager.query(
@@ -285,6 +336,8 @@ export async function writeStrategy(input: WriteStrategyInput): Promise<WriteStr
          potential_score, urgency_score, urgency_label, portfolio_fit_score,
          suggested_allocation_pct, suggested_allocation_ils, action_catalysts,
          avoid_conditions, next_review_at, asset_class,
+         thesis, key_risks, evidence_summary, next_earnings_date,
+         last_full_report_at, last_quick_check_at, last_daily_brief_at,
          created_at, updated_at
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
@@ -292,6 +345,8 @@ export async function writeStrategy(input: WriteStrategyInput): Promise<WriteStr
          $17, $18, $19::jsonb, $20,
          $21, $22, $23, $24,
          $25, $26, $27::jsonb, $28::jsonb, $29, $30,
+         $31, $32::jsonb, $33::jsonb, $34,
+         $35, $36, $37,
          NOW(), NOW()
        )
        ON CONFLICT (user_id, ticker) DO UPDATE SET
@@ -323,6 +378,13 @@ export async function writeStrategy(input: WriteStrategyInput): Promise<WriteStr
          avoid_conditions = EXCLUDED.avoid_conditions,
          next_review_at = EXCLUDED.next_review_at,
          asset_class = EXCLUDED.asset_class,
+         thesis = EXCLUDED.thesis,
+         key_risks = EXCLUDED.key_risks,
+         evidence_summary = EXCLUDED.evidence_summary,
+         next_earnings_date = EXCLUDED.next_earnings_date,
+         last_full_report_at = COALESCE(EXCLUDED.last_full_report_at, strategies.last_full_report_at),
+         last_quick_check_at = COALESCE(EXCLUDED.last_quick_check_at, strategies.last_quick_check_at),
+         last_daily_brief_at = COALESCE(EXCLUDED.last_daily_brief_at, strategies.last_daily_brief_at),
          updated_at = NOW()
        RETURNING ${SELECT_COLUMNS}`,
       params

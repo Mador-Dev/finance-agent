@@ -11,7 +11,7 @@ import { useToastStore } from "../../store/toastStore";
 import { usePreferencesStore } from "../../store/preferencesStore";
 import { t, tConfidence } from "../../store/i18n";
 import { formatILS, timeAgo } from "../../utils/format";
-import { scoreColor } from "../../utils/today/scoreColor";
+
 import {
   verdictSentence,
   scoreBucketLabel,
@@ -20,6 +20,7 @@ import {
   nextCatalyst,
   reasoningSnippet,
 } from "../../utils/advisory";
+import { CatalystTable } from "../strategy/CatalystTable";
 import type { StrategyRow, PositionRow, Verdict, VerdictRow } from "../../types/api";
 import { ThesisSection } from "./ThesisSection";
 import { ScoreBreakdown } from "./ScoreBreakdown";
@@ -34,14 +35,6 @@ interface StrategyModalProps {
   onDeepDive?: (ticker: string) => void;
 }
 
-const VERDICT_LINE: Record<Verdict, string> = {
-  BUY:    verdictSentence("BUY"),
-  ADD:    verdictSentence("ADD"),
-  HOLD:   verdictSentence("HOLD"),
-  REDUCE: verdictSentence("REDUCE"),
-  SELL:   verdictSentence("SELL"),
-  CLOSE:  verdictSentence("CLOSE"),
-};
 
 /** Primary CTA label per verdict. HOLD → undefined = no primary button shown. */
 const VERDICT_CTA: Partial<Record<Verdict, string>> = {
@@ -124,19 +117,23 @@ export function StrategyModal({
         background: "rgba(0,0,0,0.65)",
         backdropFilter: "blur(4px)",
         display: "flex",
-        alignItems: "stretch",
+        alignItems: "flex-start",
         justifyContent: "center",
+        padding: "12px",
       }}
     >
       <div
         style={{
           width: "100%",
           maxWidth: 560,
+          maxHeight: "calc(100vh - 24px)",
           background: "var(--bg-base)",
           display: "flex",
           flexDirection: "column",
-          maxHeight: "100vh",
           overflow: "hidden",
+          borderRadius: 16,
+          border: "1px solid rgba(255,255,255,0.18)",
+          boxShadow: "0 0 0 1px rgba(255,255,255,0.06), 0 24px 80px rgba(0,0,0,0.85), 0 8px 32px rgba(0,0,0,0.6)",
         }}
       >
         {/* Header */}
@@ -267,6 +264,52 @@ export function StrategyModal({
   );
 }
 
+function verdictFg(verdict: Verdict): string {
+  switch (verdict) {
+    case "BUY": case "ADD":    return "var(--color-green)";
+    case "REDUCE":             return "var(--color-amber)";
+    case "SELL": case "CLOSE": return "var(--color-red)";
+    default:                   return "var(--text-primary)";
+  }
+}
+
+function MetaPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "3px 10px",
+        background: "var(--bg-surface)",
+        border: "0.5px solid var(--bg-border)",
+        borderRadius: "var(--radius-pill)",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "var(--text-2xs)",
+          color: "var(--text-tertiary)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 400,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: "var(--text-xs)",
+          color: "var(--text-secondary)",
+          fontWeight: "var(--weight-bold)",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function DetailContent({
   strategy,
   ticker,
@@ -281,7 +324,7 @@ function DetailContent({
   language: "en" | "he";
 }) {
   const { guidanceMap, updateGuidance } = usePositionGuidance();
-  const verdictLine = VERDICT_LINE[strategy.verdict];
+  const verdictLine = verdictSentence(strategy.verdict);
   const heroScore = score ?? 0;
   const hasScore = score !== undefined && Number.isFinite(score);
 
@@ -293,99 +336,105 @@ function DetailContent({
   const dayChangeILS = position?.dayChangeILS ?? 0;
   const hasDay = dayChangePct !== 0;
 
-  const confidenceColor =
-    strategy.confidence === "high"
-      ? "var(--color-green)"
-      : strategy.confidence === "low"
-      ? "var(--color-amber)"
-      : "var(--text-secondary)";
-
   const timeframeLabel =
     strategy.timeframe && strategy.timeframe !== "undefined"
-      ? ` · ${strategy.timeframe.replace(/_/g, " ")} horizon`
-      : "";
-  const rationale = twoSentences(strategy.reasoning);
+      ? strategy.timeframe.replace(/_/g, " ")
+      : null;
+
+  const totalConditions = strategy.entryConditions.length + strategy.exitConditions.length;
+
   return (
     <div>
-      {/* ScoreHero — score left, verdict + updated right */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 16,
-          padding: "20px 16px 8px",
-        }}
-      >
-        {/* Left: big score number + "POSITION SCORE" label */}
-        <div>
-          <span
-            style={{
-              display: "block",
-              fontSize: "var(--text-hero)",
-              fontWeight: "var(--weight-bold)",
-              lineHeight: 1,
-              letterSpacing: "-1.5px",
-              color: hasScore ? scoreColor(heroScore) : "var(--text-primary)",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {hasScore ? heroScore : "—"}
-          </span>
-          <span
-            style={{
-              display: "block",
-              fontSize: 9,
-              fontWeight: 400,
-              color: "var(--text-tertiary)",
-              textTransform: "uppercase",
-              letterSpacing: "0.07em",
-              marginTop: 4,
-            }}
-          >
-            Position score
-          </span>
-          {hasScore && (
-            <span
-              style={{
-                display: "block",
-                fontSize: "var(--text-xs)",
-                color: scoreColor(heroScore),
-                marginTop: 2,
-              }}
-            >
-              {scoreBucketEmoji(heroScore)} {scoreBucketLabel(heroScore)}
-            </span>
-          )}
+
+      {/* ─── Verdict block ─── */}
+      <div style={{ padding: "20px 16px 16px" }}>
+
+        {/* Verdict field label */}
+        <div
+          style={{
+            fontSize: "var(--text-2xs)",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: "var(--text-tertiary)",
+            fontWeight: 400,
+            marginBottom: 6,
+          }}
+        >
+          {language === "he" ? "המלצה" : "Verdict"}
         </div>
 
-        {/* Right: verdict line + updated timestamp + timeframe */}
-        <div style={{ textAlign: "end", maxWidth: "55%" }}>
-          <div
-            style={{
-              fontSize: "var(--text-md)",
-              color: "var(--text-secondary)",
-              lineHeight: 1.4,
-            }}
-          >
-            {verdictLine}
+        {/* Verdict keyword + sentence + timestamp */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 10,
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+              <span
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: "var(--weight-bold)",
+                  color: verdictFg(strategy.verdict),
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  letterSpacing: "-0.5px",
+                }}
+              >
+                {strategy.verdict}
+              </span>
+              <span
+                style={{
+                  fontSize: "var(--text-md)",
+                  color: "var(--text-secondary)",
+                  lineHeight: 1.4,
+                  fontWeight: "var(--weight-regular)",
+                }}
+              >
+                {verdictLine}
+              </span>
+            </div>
           </div>
-          <div
+          <span
             style={{
-              fontSize: "var(--text-xs)",
+              fontSize: "var(--text-2xs)",
               color: "var(--text-tertiary)",
-              marginTop: 4,
+              whiteSpace: "nowrap",
+              paddingTop: 4,
+              flexShrink: 0,
             }}
           >
-            {language === "he" ? "עודכן" : "Updated"} {timeAgo(strategy.updatedAt)}
-            {timeframeLabel}
-          </div>
+            {timeAgo(strategy.updatedAt)}
+          </span>
+        </div>
+
+        {/* Meta pills — confidence · horizon */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <MetaPill
+            label={language === "he" ? "ביטחון" : "Confidence"}
+            value={tConfidence(strategy.confidence, language)}
+          />
+          {timeframeLabel && (
+            <MetaPill
+              label={language === "he" ? "אופק" : "Horizon"}
+              value={timeframeLabel}
+            />
+          )}
+          {hasScore && (
+            <MetaPill
+              label={language === "he" ? "ניקוד" : "Score"}
+              value={`${heroScore} · ${scoreBucketEmoji(heroScore)} ${scoreBucketLabel(heroScore)}`}
+            />
+          )}
         </div>
       </div>
 
-      {/* Score bar */}
+      {/* Score bar + breakdown */}
       {hasScore && (
-        <div style={{ paddingBottom: scoreBreakdown ? 4 : 16 }}>
+        <div style={{ paddingBottom: scoreBreakdown ? 4 : 0 }}>
           <ScoreBar score={heroScore} />
         </div>
       )}
@@ -395,151 +444,28 @@ function DetailContent({
 
       <Divider />
 
-      {/* 2×2 stat grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 8,
-          padding: "12px 16px",
-        }}
-      >
-        <StatCell
-          label={language === "he" ? "משקל" : "Weight"}
-          value={`${(strategy.positionWeightPct ?? position?.weightPct ?? 0).toFixed(1)}%`}
-          sub="of portfolio"
-        />
-        <StatCell
-          label={language === "he" ? "רווח / הפסד" : "P / L"}
-          value={
-            position?.plPct !== undefined
-              ? `${position.plPct >= 0 ? "+" : ""}${position.plPct.toFixed(1)}%`
-              : "—"
-          }
-          sub={
-            position?.plILS !== undefined && position.plILS !== 0
-              ? `${position.plILS >= 0 ? "+" : ""}${formatILS(Math.abs(position.plILS))}`
-              : undefined
-          }
-          positive={position?.plPct !== undefined ? position.plPct > 0 : null}
-        />
-        <StatCell
-          label={language === "he" ? "היום" : "Today"}
-          value={hasDay ? `${dayChangePct >= 0 ? "+" : ""}${dayChangePct.toFixed(2)}%` : "—"}
-          sub={
-            hasDay && dayChangeILS !== 0
-              ? `${dayChangeILS >= 0 ? "+" : ""}${formatILS(Math.abs(dayChangeILS))}`
-              : undefined
-          }
-          positive={hasDay ? dayChangePct > 0 : null}
-        />
-        {/* Confidence — grey pill */}
-        <div
-          style={{
-            background: "var(--bg-surface)",
-            borderRadius: "var(--radius-md)",
-            padding: "10px 12px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "var(--text-2xs)",
-              color: "var(--text-tertiary)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              fontWeight: 400,
-              marginBottom: 6,
-            }}
-          >
-            {language === "he" ? "ביטחון" : "Confidence"}
-          </div>
-          <span
-            style={{
-              display: "inline-block",
-              fontSize: "var(--text-sm)",
-              fontWeight: "var(--weight-bold)",
-              color: "var(--text-secondary)",
-              border: "0.5px solid var(--bg-border-mid)",
-              borderRadius: "var(--radius-pill)",
-              padding: "2px 10px",
-            }}
-          >
-            {tConfidence(strategy.confidence, language)}
-          </span>
-          {strategy.confidence === "low" && (
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 4 }}>
-              partial data
-            </div>
-          )}
-        </div>
-      </div>
-
-      <Divider />
-
-      {/* Your thesis */}
-      {ticker && (
-        <ThesisSection
-          ticker={ticker}
-          guidance={guidanceMap[ticker]}
-          onUpdate={updateGuidance}
-        />
-      )}
-
-      {/* AI analysis — reasoning snippet */}
-      {rationale && (
+      {/* ─── Analysis ─── */}
+      {strategy.reasoning && (
         <>
           <SectionHeader
             label={language === "he" ? "ניתוח" : "Analysis"}
-            meta={`${language === "he" ? "עודכן" : "updated"} ${timeAgo(strategy.updatedAt)}`}
           />
           <p
             style={{
               padding: "0 16px 16px",
+              margin: 0,
               fontSize: "var(--text-md)",
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               color: "var(--text-secondary)",
               fontWeight: "var(--weight-regular)",
             }}
           >
-            {rationale}
+            {strategy.reasoning}
           </p>
         </>
       )}
 
-      {/* Next catalyst — most urgent upcoming catalyst */}
-      {(() => {
-        const upcoming = nextCatalyst(strategy.catalysts ?? []);
-        if (!upcoming) return null;
-        return (
-          <div
-            style={{
-              margin: "0 16px 16px",
-              padding: "10px 12px",
-              borderRadius: "var(--radius-md)",
-              background: "rgba(59,130,246,0.08)",
-              border: "0.5px solid rgba(59,130,246,0.20)",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "var(--text-2xs)",
-                fontWeight: "var(--weight-bold)",
-                color: "var(--color-accent-blue, var(--text-secondary))",
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                marginBottom: 4,
-              }}
-            >
-              {language === "he" ? "קטליסט הבא" : "Next catalyst"}
-            </div>
-            <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", lineHeight: 1.4 }}>
-              {formatCatalyst(upcoming)}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Bull / Bear 2-col */}
+      {/* ─── Bull / Bear ─── */}
       {(strategy.bullCase || strategy.bearCase) && (
         <div
           style={{
@@ -562,14 +488,35 @@ function DetailContent({
         </div>
       )}
 
+      {/* ─── Catalysts — structured table ─── */}
+      {(strategy.catalysts ?? []).length > 0 && (
+        <div style={{ margin: "0 16px 16px" }}>
+          <div
+            style={{
+              fontSize: "var(--text-2xs)",
+              fontWeight: "var(--weight-bold)",
+              color: "var(--text-secondary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 6,
+            }}
+          >
+            {language === "he"
+              ? `קטליסטים (${strategy.catalysts!.length})`
+              : `Catalysts (${strategy.catalysts!.length})`}
+          </div>
+          <CatalystTable catalysts={strategy.catalysts ?? []} />
+        </div>
+      )}
+
       <Divider />
 
-      {/* Conditions — exit first (most actionable), then entry */}
+      {/* ─── Conditions — exit first (most actionable), then entry ─── */}
       <SectionHeader
         label={language === "he" ? "תנאים" : "Conditions"}
-        meta={`${strategy.entryConditions.length + strategy.exitConditions.length} active`}
+        meta={totalConditions > 0 ? `${totalConditions} active` : undefined}
       />
-      <div style={{ padding: "0 16px 24px" }}>
+      <div style={{ padding: "0 16px 20px" }}>
         {strategy.exitConditions.map((c, i) => (
           <ConditionRow
             key={`x-${i}`}
@@ -588,12 +535,71 @@ function DetailContent({
             verdict={strategy.verdict}
           />
         ))}
-        {strategy.entryConditions.length + strategy.exitConditions.length === 0 && (
+        {totalConditions === 0 && (
           <div style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)" }}>
             {language === "he" ? "אין תנאים מוגדרים" : "No conditions set."}
           </div>
         )}
       </div>
+
+      {/* ─── Your position stats (only if position data available) ─── */}
+      {position && (
+        <>
+          <Divider />
+          <SectionHeader label={language === "he" ? "הפוזיציה שלך" : "Your position"} />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              padding: "0 16px 16px",
+            }}
+          >
+            <StatCell
+              label={language === "he" ? "משקל" : "Weight"}
+              value={`${(strategy.positionWeightPct ?? position.weightPct ?? 0).toFixed(1)}%`}
+              sub="of portfolio"
+            />
+            <StatCell
+              label={language === "he" ? "רווח / הפסד" : "P / L"}
+              value={`${position.plPct >= 0 ? "+" : ""}${position.plPct.toFixed(1)}%`}
+              sub={
+                position.plILS !== 0
+                  ? `${position.plILS >= 0 ? "+" : ""}${formatILS(Math.abs(position.plILS))}`
+                  : undefined
+              }
+              positive={position.plPct > 0 ? true : position.plPct < 0 ? false : null}
+            />
+            <StatCell
+              label={language === "he" ? "היום" : "Today"}
+              value={hasDay ? `${dayChangePct >= 0 ? "+" : ""}${dayChangePct.toFixed(2)}%` : "—"}
+              sub={
+                hasDay && dayChangeILS !== 0
+                  ? `${dayChangeILS >= 0 ? "+" : ""}${formatILS(Math.abs(dayChangeILS))}`
+                  : undefined
+              }
+              positive={hasDay ? dayChangePct > 0 : null}
+            />
+            <StatCell
+              label={language === "he" ? "שווי" : "Value"}
+              value={formatILS(position.currentILS)}
+              sub={`${position.shares.toLocaleString()} ${language === "he" ? "מניות" : "shares"}`}
+            />
+          </div>
+        </>
+      )}
+
+      {/* ─── Your thesis ─── */}
+      {ticker && (
+        <>
+          <Divider />
+          <ThesisSection
+            ticker={ticker}
+            guidance={guidanceMap[ticker]}
+            onUpdate={updateGuidance}
+          />
+        </>
+      )}
     </div>
   );
 }

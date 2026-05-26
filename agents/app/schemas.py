@@ -81,8 +81,22 @@ class BootstrapStartRequest(BaseModel):
 
 
 class StrategyCatalyst(BaseModel):
+    """A monitorable event the thesis depends on.
+
+    The catalyst window is described by `windowStart` + `windowEnd`. The
+    legacy `expiresAt` field is preserved so old rows still validate; new
+    writers should populate `windowEnd` (UI treats `windowEnd ?? expiresAt`
+    as the authoritative deadline).
+    """
+
     description: str = Field(max_length=300)
-    expiresAt: str | None = None
+    category: Literal[
+        "earnings", "product", "regulatory", "macro", "guidance", "other"
+    ] = "other"
+    windowStart: str | None = None  # ISO date when the catalyst window opens
+    windowEnd: str | None = None    # ISO date when it closes (preferred over expiresAt)
+    importance: Literal["high", "medium", "low"] = "medium"
+    expiresAt: str | None = None    # legacy alias for windowEnd (back-compat only)
     triggered: bool = False
 
 
@@ -92,7 +106,16 @@ class ResearchEvidence(BaseModel):
     uncertainties: list[str] = Field(default_factory=list)
 
 
-class TickerStrategyDraft(BaseModel):
+class CoordinatorDraft(BaseModel):
+    """The strategy synthesis fields the coordinator LLM emits.
+
+    Kept separate from `TickerStrategyDraft` for one reason: OpenAI strict
+    structured-output mode rejects `dict[str, Any]` (it requires
+    `additionalProperties:false` on every object). `analyst_reports` is filled
+    programmatically by the LangGraph workflow after synthesis, so it doesn't
+    need to be in the LLM's response schema.
+    """
+
     ticker: str = Field(pattern=TickerPattern)
     thesis: str = Field(max_length=280)
     verdict: Verdict
@@ -103,9 +126,248 @@ class TickerStrategyDraft(BaseModel):
     bear_case: str | None = Field(default=None, max_length=600)
     key_risks: list[str] = Field(default_factory=list, max_length=8)
     invalidation_conditions: list[str] = Field(default_factory=list, max_length=8)
+    entry_conditions: list[str] = Field(default_factory=list, max_length=5)
     evidence_summary: ResearchEvidence = Field(default_factory=ResearchEvidence)
     reasoning: str = Field(max_length=800)
+    next_review_at: str | None = None
+
+
+class TickerStrategyDraft(CoordinatorDraft):
+    """Full strategy draft = coordinator synthesis + attached analyst reports."""
+
+    # analyst_reports is filled by the workflow, never by the LLM directly.
     analyst_reports: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @classmethod
+    def from_coordinator(
+        cls, draft: "CoordinatorDraft", analyst_reports: dict[str, dict[str, Any]]
+    ) -> "TickerStrategyDraft":
+        return cls(**draft.model_dump(), analyst_reports=analyst_reports)
+
+
+# ── Structured analyst report payloads ──────────────────────────────────────
+# Each report kind is a Pydantic model so the LangGraph workflow gets a strict
+# schema for OpenAI structured outputs and so the DB row payload is consistent.
+
+
+class Earnings(BaseModel):
+    result: Literal["beat", "miss", "in_line"] | None = None
+    epsActual: float | None = None
+    epsExpected: float | None = None
+    revenueActualM: float | None = None
+    revenueExpectedM: float | None = None
+
+
+class Valuation(BaseModel):
+    pe: float | None = None
+    fcfYield: float | None = None
+    sectorAvgPe: float | None = None
+    assessment: Literal["cheap", "fair", "expensive"] | None = None
+
+
+class AnalystConsensus(BaseModel):
+    buy: int = 0
+    hold: int = 0
+    sell: int = 0
+    avgTargetPrice: float | None = None
+    currency: Literal["USD", "ILS"] = "USD"
+
+
+class FundamentalsReport(BaseModel):
+    earnings: Earnings | None = None
+    nextEarningsDate: str | None = None
+    revenueGrowthYoY: float | None = None
+    marginTrend: Literal["improving", "stable", "deteriorating"] | None = None
+    guidance: Literal["raised", "maintained", "lowered", "unknown"] = "unknown"
+    balanceSheet: Literal["strong", "adequate", "stretched"] | None = None
+    debtToEquity: float | None = None
+    valuation: Valuation | None = None
+    analystConsensus: AnalystConsensus | None = None
+    insiderActivity: Literal["buying", "selling", "neutral", "unknown"] = "unknown"
+    fundamentalView: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class PriceContext(BaseModel):
+    current: float | None = None
+    week52Low: float | None = None
+    week52High: float | None = None
+    positionInRange: float | None = None
+
+
+class MovingAverages(BaseModel):
+    ma50: float | None = None
+    ma200: float | None = None
+    priceVsMa50: Literal["above", "below"] | None = None
+    priceVsMa200: Literal["above", "below"] | None = None
+
+
+class RSI(BaseModel):
+    value: float | None = None
+    signal: Literal["overbought", "neutral", "oversold"] | None = None
+
+
+class KeyLevels(BaseModel):
+    support: float | None = None
+    resistance: float | None = None
+
+
+class TechnicalReport(BaseModel):
+    price: PriceContext | None = None
+    movingAverages: MovingAverages | None = None
+    rsi: RSI | None = None
+    macd: Literal["bullish", "bearish", "neutral"] = "neutral"
+    volume: Literal["elevated", "average", "low"] = "average"
+    keyLevels: KeyLevels | None = None
+    pattern: str | None = None
+    atr: float | None = None
+    trendStrength: Literal["uptrend", "downtrend", "sideways"] | None = None
+    technicalView: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class AnalystAction(BaseModel):
+    action: str
+    analyst: str
+    targetPrice: float | None = None
+
+
+class InsiderTransaction(BaseModel):
+    type: Literal["Buy", "Sell"]
+    insider: str
+    shares: str | None = None
+    value: str | None = None
+
+
+class NewsItem(BaseModel):
+    headline: str
+    sentiment: Literal["positive", "negative", "neutral"] = "neutral"
+    url: str | None = None
+
+
+class SentimentReport(BaseModel):
+    analystActions: list[AnalystAction] = Field(default_factory=list)
+    insiderTransactions: list[InsiderTransaction] = Field(default_factory=list)
+    majorNews: list[NewsItem] = Field(default_factory=list)
+    shortInterest: str | None = None
+    optionsFlow: Literal["bullish", "bearish", "neutral"] | None = None
+    institutionalChangeSummary: str | None = None
+    narrativeShift: str = ""
+    sentimentView: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class RateEnvironment(BaseModel):
+    relevantBank: str = ""
+    currentRate: str = ""
+    direction: Literal["hiking", "cutting", "holding"] = "holding"
+    relevance: str = ""
+
+
+class SectorPerformance(BaseModel):
+    sectorName: str = ""
+    performanceVsMarket30d: str = ""
+    trend: Literal["outperforming", "in_line", "underperforming"] = "in_line"
+
+
+class CurrencyEnv(BaseModel):
+    usdIls: str | None = None
+    trend: Literal["strengthening", "stable", "weakening"] = "stable"
+    impactOnPosition: str = ""
+
+
+class Geopolitical(BaseModel):
+    relevantFactor: str | None = None
+    riskLevel: Literal["low", "medium", "high"] | None = None
+
+
+class MacroReport(BaseModel):
+    rateEnvironment: RateEnvironment | None = None
+    sectorPerformance: SectorPerformance | None = None
+    currency: CurrencyEnv | None = None
+    geopolitical: Geopolitical | None = None
+    inflationRead: Literal["cooling", "sticky", "rising"] | None = None
+    marketRegime: str = ""
+    macroView: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class RiskReport(BaseModel):
+    portfolioWeightPct: float | None = None
+    positionValueILS: float | None = None
+    plPct: float | None = None
+    plILS: float | None = None
+    avgPricePaid: str | None = None
+    livePriceCurrency: Literal["USD", "ILS"] | None = None
+    concentrationFlag: bool = False
+    stopLossLevel: float | None = None
+    maxDrawdownFromEntryPct: float | None = None
+    riskFacts: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class CaseArgument(BaseModel):
+    claim: str = Field(max_length=200)
+    dataPoint: str = ""
+
+
+class BullCaseReport(BaseModel):
+    coreThesis: str
+    priceTarget12m: float | None = None
+    probabilityEstimate: int | None = None
+    arguments: list[CaseArgument] = Field(default_factory=list)
+    conditionToBeWrong: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class BearCaseReport(BaseModel):
+    coreConcern: str
+    priceTarget12m: float | None = None
+    probabilityEstimate: int | None = None
+    arguments: list[CaseArgument] = Field(default_factory=list)
+    conditionToBeWrong: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
+class DebateReport(BaseModel):
+    resolution: str
+    confidenceModifier: Literal["+1 notch", "unchanged", "-1 notch"] = "unchanged"
+    keySwingFactor: str = ""
+    verdictChange: str | None = None
+    baseCasePriceTarget: float | None = None
+
+
+class CatalystExpiryCheck(BaseModel):
+    expiredCount: int = 0
+    nearingExpiry: list[str] = Field(default_factory=list)
+
+
+class QuickCheckReport(BaseModel):
+    score: int = Field(ge=0, le=100)
+    decision: Literal["safe", "watch", "escalate"]
+    signals: list[str] = Field(default_factory=list)
+    thesisHealth: list[str] = Field(default_factory=list)
+    catalystExpiryCheck: CatalystExpiryCheck = Field(default_factory=CatalystExpiryCheck)
+    thesisAlignmentFlag: Literal["aligned", "neutral", "diverging"] = "neutral"
+    escalationReason: str | None = None
+    advisorSummary: str = ""
+    advisorReasons: list[str] = Field(default_factory=list)
+    dayChangePct: float | None = None
+    newsHeadline: str | None = None
+    daysSinceLastDeepDive: int | None = None
+    sources: list[str] = Field(default_factory=list)
+
+
+class DailyReport(BaseModel):
+    moveReason: str = ""
+    dayChangePct: float | None = None
+    volumeFlag: Literal["normal", "elevated", "low"] = "normal"
+    sectorChangePct: float | None = None
+    relativeStrength: Literal["outperforming", "inline", "underperforming"] | None = None
+    newsHeadline: str | None = None
+    newsUrl: str | None = None
+    escalationSignal: bool = False
+    sources: list[str] = Field(default_factory=list)
 
 
 class BootstrapTickerState(BaseModel):

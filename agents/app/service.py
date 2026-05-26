@@ -173,6 +173,7 @@ class BootstrapService:
                         strategy,
                         guidance_applied=ticker in payload.guidance,
                         run_id=run_id,
+                        action="bootstrap",
                     )
                     store.write_analyst_reports(payload.userId, ticker, run_id, "bootstrap", strategy)
                     store.complete_analysis_run(run_id, "completed")

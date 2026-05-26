@@ -12,8 +12,22 @@ export type StrategyAssetClass =
   | "index"
   | "other";
 
+export type CatalystCategory =
+  | "earnings"
+  | "product"
+  | "regulatory"
+  | "macro"
+  | "guidance"
+  | "other";
+export type CatalystImportance = "high" | "medium" | "low";
+
 export interface StrategyCatalystJson {
   description: string;
+  category?: CatalystCategory;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+  importance?: CatalystImportance;
+  // Legacy alias for windowEnd; preserved so older rows still validate.
   expiresAt: string | null;
   triggered: boolean;
 }

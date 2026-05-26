@@ -180,6 +180,10 @@ function normalizeCatalysts(value: unknown, repairNotes: string[]): Strategy["ca
       repairNotes.push("Converted string catalyst into structured catalyst object");
       return [{
         description: stringItem.slice(0, 300),
+        category: "other",
+        importance: "medium",
+        windowStart: null,
+        windowEnd: null,
         expiresAt: null,
         triggered: false,
       }];
@@ -193,9 +197,25 @@ function normalizeCatalysts(value: unknown, repairNotes: string[]): Strategy["ca
       ?? asTrimmedString(item["name"]);
     if (!description) return [];
 
+    const windowEnd = toNullableDateString(
+      item["windowEnd"] ?? item["expiresAt"] ?? item["date"] ?? item["deadline"]
+    );
+    const rawCategory = asTrimmedString(item["category"])?.toLowerCase();
+    const rawImportance = asTrimmedString(item["importance"])?.toLowerCase();
+    const allowedCategories = new Set(["earnings", "product", "regulatory", "macro", "guidance", "other"]);
+    const allowedImportance = new Set(["high", "medium", "low"]);
+
     return [{
       description: description.slice(0, 300),
-      expiresAt: toNullableDateString(item["expiresAt"] ?? item["date"] ?? item["deadline"]),
+      category: (rawCategory && allowedCategories.has(rawCategory)
+        ? rawCategory
+        : "other") as Strategy["catalysts"][number]["category"],
+      importance: (rawImportance && allowedImportance.has(rawImportance)
+        ? rawImportance
+        : "medium") as Strategy["catalysts"][number]["importance"],
+      windowStart: toNullableDateString(item["windowStart"]),
+      windowEnd,
+      expiresAt: windowEnd,
       triggered: Boolean(item["triggered"]),
     }];
   });
@@ -275,6 +295,19 @@ function buildCanonicalStrategy(record: JsonRecord, tickerHint: string | undefin
     },
     actionCatalysts: normalizeCatalysts(record["actionCatalysts"], repairNotes),
     avoidConditions: normalizeStringList(record["avoidConditions"], 8, 200, repairNotes, "avoidConditions"),
+    keyRisks: normalizeStringList(record["keyRisks"], 8, 200, repairNotes, "keyRisks"),
+    thesis: asTrimmedString(record["thesis"]) ?? null,
+    evidenceSummary: isRecord(record["evidenceSummary"])
+      ? {
+          supporting: Array.isArray(record["evidenceSummary"]["supporting"]) ? (record["evidenceSummary"]["supporting"] as string[]) : [],
+          conflicting: Array.isArray(record["evidenceSummary"]["conflicting"]) ? (record["evidenceSummary"]["conflicting"] as string[]) : [],
+          uncertainties: Array.isArray(record["evidenceSummary"]["uncertainties"]) ? (record["evidenceSummary"]["uncertainties"] as string[]) : [],
+        }
+      : undefined,
+    nextEarningsDate: toNullableDateString(record["nextEarningsDate"]),
+    lastFullReportAt: toNullableDateString(record["lastFullReportAt"]),
+    lastQuickCheckAt: toNullableDateString(record["lastQuickCheckAt"]),
+    lastDailyBriefAt: toNullableDateString(record["lastDailyBriefAt"]),
   };
 
   const assetScope = normalizeOptionalEnum(record["assetScope"], ASSET_SCOPES);

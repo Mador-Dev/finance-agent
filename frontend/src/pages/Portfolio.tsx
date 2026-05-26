@@ -18,7 +18,7 @@ import { Spinner } from "../components/ui/Spinner";
 import { ErrorState } from "../components/ui/ErrorState";
 import { EmptyState } from "../components/ui/EmptyState";
 import { Card } from "../components/ui/Card";
-import { formatILS, timeAgo, formatPct } from "../utils/format";
+import { formatILS, timeAgo } from "../utils/format";
 import { usePreferencesStore } from "../store/preferencesStore";
 import { useToastStore } from "../store/toastStore";
 import { t } from "../store/i18n";
@@ -26,7 +26,6 @@ import { AddPositionModal } from "../components/portfolio/AddPositionModal";
 import { SetupBanner } from "../components/today/SetupBanner";
 import { AttentionCard } from "../components/today/AttentionCard";
 import { HeroStatCard } from "../components/design/HeroStatCard";
-import { StatCell } from "../components/design/StatCell";
 import { classifyAttention } from "../utils/today/classifyAttention";
 import { healthScore, portfolioHealthScore, DEFAULT_STOP_LOSS_PCT } from "../utils/today/healthScore";
 import { getClosedPositions } from "../utils/closedPositions";
@@ -591,48 +590,57 @@ export function Portfolio() {
         <div style={{ marginTop: 12 }}>
           <HeroStatCard
             value={formatILS(portfolio.totalILS ?? 0)}
-            pnlLine={`${formatPct(portfolio.totalPlPct ?? 0)} all-time`}
+            pnlLine=""
             pnlPositive={(portfolio.totalPlPct ?? 0) >= 0 ? (portfolio.totalPlPct ?? 0) > 0 : false}
             portfolioScore={portfolioHealth?.score ?? null}
             description={buildPortfolioDescription(attentionItems.length, portfolio.positions.length)}
+            todayPct={portfolio.totalDayChangePct ?? 0}
+            totalReturnPct={portfolio.totalPlPct ?? 0}
           />
         </div>
       )}
 
-      {/* 2-col stats — today's change | USD/ILS */}
-      {!isBootstrapping && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: "0 16px",
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 8,
-          }}
-        >
-          <StatCell
-            label="Today"
-            value={
-              (portfolio.totalDayChangePct ?? 0) === 0
-                ? "—"
-                : `${(portfolio.totalDayChangePct ?? 0) >= 0 ? "+" : ""}${(portfolio.totalDayChangePct ?? 0).toFixed(2)}%`
-            }
-            sub={
-              (portfolio.totalDayChangeILS ?? 0) === 0
-                ? undefined
-                : `${(portfolio.totalDayChangeILS ?? 0) >= 0 ? "+" : ""}${formatILS(Math.abs(portfolio.totalDayChangeILS ?? 0))}`
-            }
-            positive={
-              (portfolio.totalDayChangePct ?? 0) === 0
-                ? null
-                : (portfolio.totalDayChangePct ?? 0) > 0
-            }
-          />
-          <StatCell
-            label="USD / ILS"
-            value={(portfolio.usdIlsRate ?? 0).toFixed(2)}
-            sub={portfolio.updatedAt ? `updated ${timeAgo(portfolio.updatedAt)}` : undefined}
-          />
+      {/* FX rate — secondary info, compact pill */}
+      {!isBootstrapping && (portfolio.usdIlsRate ?? 0) > 0 && (
+        <div style={{ marginTop: 8, padding: "0 18px" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 12px",
+              background: "var(--bg-surface)",
+              border: "0.5px solid var(--bg-border)",
+              borderRadius: "var(--radius-md)",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 9,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.07em",
+                color: "var(--text-tertiary)",
+              }}
+            >
+              USD / ILS
+            </span>
+            <span
+              style={{
+                fontSize: "var(--text-sm)",
+                fontWeight: 700,
+                color: "var(--text-primary)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {(portfolio.usdIlsRate ?? 0).toFixed(2)}
+            </span>
+            {portfolio.updatedAt && (
+              <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+                · {timeAgo(portfolio.updatedAt)}
+              </span>
+            )}
+          </div>
         </div>
       )}
 

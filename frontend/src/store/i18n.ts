@@ -165,7 +165,7 @@ export const translations: Translations = {
     portfolioTab: "Portfolio",
     alertsTab: "Feed",
     reportsTab: "Feed",
-    strategiesTab: "Analysis",
+    strategiesTab: "Strategy",
     controlsTab: "Controls",
     chatTab: "Chat",
     // Login
@@ -345,7 +345,7 @@ export const translations: Translations = {
     colTimeframe: "Timeframe",
     colSize: "Size ₪",
     colWeightPct: "Weight %",
-    colReasoning: "Reasoning",
+    colReasoning: "Confidence",
     colUpdated: "Updated",
     // Controls
     controls: "Controls",
@@ -628,7 +628,7 @@ export const translations: Translations = {
     portfolioTab: "תיק",
     alertsTab: "פיד",
     reportsTab: "פיד",
-    strategiesTab: "ניתוח",
+    strategiesTab: "אסטרטגיה",
     controlsTab: "בקרה",
     chatTab: "צ'אט",
     // Login
@@ -808,7 +808,7 @@ export const translations: Translations = {
     colTimeframe: "מסגרת זמן",
     colSize: "גודל ₪",
     colWeightPct: "משקל %",
-    colReasoning: "נימוק",
+    colReasoning: "ביטחון",
     colUpdated: "עדכון",
     // Controls
     controls: "בקרה",

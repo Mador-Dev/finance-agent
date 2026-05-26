@@ -1,3 +1,4 @@
+import React from "react";
 import type { ReactElement, ReactNode } from "react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,6 +33,7 @@ import {
   scoreExplanation,
   verdictSentence,
 } from "../utils/advisory";
+import { CatalystTable } from "../components/strategy/CatalystTable";
 import type { Verdict } from "../types/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,6 +46,7 @@ type DetailReportType =
   | "risk"
   | "bull_case"
   | "bear_case"
+  | "debate"
   | "strategy"
   | "quick_check";
 
@@ -108,6 +111,7 @@ const TAB_LABELS: Record<DetailReportType, string> = {
   quick_check: "Quick check",
   bull_case: "Bull vs Bear",
   bear_case: "",
+  debate: "",
 };
 
 const ESCALATED = new Set(["SELL", "CLOSE", "REDUCE"]);
@@ -143,15 +147,38 @@ function progressPct(job: Job): number {
 }
 
 function reportTypesForItem(item: FeedItem): DetailReportType[] {
-  if (item.mode === "quick_check" || item.mode === "daily_brief" || item.mode === "full_report") {
-    return ["quick_check", "strategy"];
+  switch (item.mode) {
+    case "quick_check":
+      // Quick check: health score gauge + strategy overview only
+      return ["quick_check", "strategy"];
+
+    case "daily_brief":
+      // Daily brief: "what changed" snapshot only — no analyst tabs
+      return ["quick_check", "strategy"];
+
+    case "full_report":
+      // Full report: 6 analyst tabs, no bull/bear
+      return ["strategy", "fundamentals", "technical", "sentiment", "macro", "risk"];
+
+    case "deep_dive": {
+      // Deep dive: all 6 + bull vs bear (always present for deep dives)
+      const tabs: DetailReportType[] = ["strategy", "fundamentals", "technical", "sentiment", "macro", "risk"];
+      const hasBull = Object.values(item.entries).some((e) => e.hasBullCase);
+      const hasBear = Object.values(item.entries).some((e) => e.hasBearCase);
+      if (hasBull || hasBear) tabs.push("bull_case");
+      return tabs;
+    }
+
+    default: {
+      // Legacy / unknown modes — show whatever analyst reports exist
+      const primary: DetailReportType[] = ["strategy", "fundamentals", "technical", "sentiment", "macro", "risk"];
+      const hasBull = Object.values(item.entries).some((e) => e.hasBullCase);
+      const hasBear = Object.values(item.entries).some((e) => e.hasBearCase);
+      if (hasBull || hasBear) primary.push("bull_case");
+      if (hasBear) primary.push("bear_case");
+      return primary;
+    }
   }
-  const primary: DetailReportType[] = ["strategy", "fundamentals", "technical", "sentiment", "macro", "risk"];
-  const hasBull = Object.values(item.entries).some((e) => e.hasBullCase);
-  const hasBear = Object.values(item.entries).some((e) => e.hasBearCase);
-  if (hasBull || hasBear) primary.push("bull_case");
-  if (hasBear) primary.push("bear_case");
-  return primary;
 }
 
 function groupEntries(entries: FeedItemEntry[]) {
@@ -658,6 +685,25 @@ function FundamentalsSection({ content: c }: { content: Rec }) {
         </p>
       ) : null}
 
+      {/* New: next earnings date + extra valuation/balance-sheet signals */}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {c.nextEarningsDate ? (
+          <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-2.5 py-1 text-sky-300">
+            📅 Next earnings: <span className="font-bold">{c.nextEarningsDate as string}</span>
+          </span>
+        ) : null}
+        {valuation?.fcfYield != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1">
+            FCF yield <span className="font-bold text-[var(--color-fg-default)]">{(valuation.fcfYield as number).toFixed(1)}%</span>
+          </span>
+        ) : null}
+        {c.debtToEquity != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1">
+            D/E <span className="font-bold text-[var(--color-fg-default)]">{(c.debtToEquity as number).toFixed(2)}</span>
+          </span>
+        ) : null}
+      </div>
+
       {c.fundamentalView ? <BodyText text={c.fundamentalView as string} /> : null}
       <SourceLinks sources={c.sources} />
     </div>
@@ -747,6 +793,28 @@ function TechnicalSection({ content: c }: { content: Rec }) {
         </div>
       ) : null}
 
+      {/* New: ATR + trend strength */}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {c.atr != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1">
+            ATR <span className="font-bold text-[var(--color-fg-default)]">{(c.atr as number).toFixed(2)}</span>
+          </span>
+        ) : null}
+        {c.trendStrength ? (
+          <span
+            className={`rounded-full border px-2.5 py-1 font-medium ${
+              (c.trendStrength as string) === "uptrend"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                : (c.trendStrength as string) === "downtrend"
+                  ? "border-red-500/25 bg-red-500/10 text-red-300"
+                  : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
+            }`}
+          >
+            Trend: {c.trendStrength as string}
+          </span>
+        ) : null}
+      </div>
+
       {c.pattern ? <p className="text-[11px] italic text-[var(--color-fg-muted)]">{c.pattern as string}</p> : null}
       {c.technicalView ? <BodyText text={c.technicalView as string} /> : null}
       <SourceLinks sources={c.sources} />
@@ -834,9 +902,32 @@ function SentimentSection({ content: c }: { content: Rec }) {
         </div>
       ) : null}
 
-      {c.shortInterest !== null && c.shortInterest !== undefined ? (
+      {/* New: short interest + options flow + 13F change */}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {c.shortInterest != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1">
+            Short interest <span className="font-medium text-[var(--color-fg-default)]">{c.shortInterest as string}</span>
+          </span>
+        ) : null}
+        {c.optionsFlow ? (
+          <span
+            className={`rounded-full border px-2.5 py-1 font-medium ${
+              (c.optionsFlow as string) === "bullish"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                : (c.optionsFlow as string) === "bearish"
+                  ? "border-red-500/25 bg-red-500/10 text-red-300"
+                  : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
+            }`}
+          >
+            Options flow: {c.optionsFlow as string}
+          </span>
+        ) : null}
+      </div>
+
+      {c.institutionalChangeSummary ? (
         <p className="text-[11px] text-[var(--color-fg-muted)]">
-          Short interest: <span className="font-medium text-[var(--color-fg-default)]">{c.shortInterest as string}</span>
+          Institutional (13F):{" "}
+          <span className="font-medium text-[var(--color-fg-default)]">{c.institutionalChangeSummary as string}</span>
         </p>
       ) : null}
 
@@ -908,6 +999,24 @@ function MacroSection({ content: c }: { content: Rec }) {
         </p>
       ) : null}
 
+      {/* New: inflation read */}
+      {c.inflationRead ? (
+        <p className="text-[11px] text-[var(--color-fg-muted)]">
+          Inflation:{" "}
+          <span
+            className={`font-medium ${
+              (c.inflationRead as string) === "cooling"
+                ? "text-emerald-400"
+                : (c.inflationRead as string) === "rising"
+                  ? "text-red-400"
+                  : "text-amber-300"
+            }`}
+          >
+            {c.inflationRead as string}
+          </span>
+        </p>
+      ) : null}
+
       {c.marketRegime ? (
         <p className="text-[11px] text-[var(--color-fg-muted)]">
           Market regime:{" "}
@@ -972,6 +1081,20 @@ function RiskSection({ content: c }: { content: Rec }) {
         </p>
       ) : null}
 
+      {/* New: stop-loss & max drawdown */}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {c.stopLossLevel != null ? (
+          <span className="rounded-full border border-red-500/25 bg-red-500/10 px-2.5 py-1 text-red-300">
+            🛑 Stop level <span className="font-bold">${(c.stopLossLevel as number).toFixed(2)}</span>
+          </span>
+        ) : null}
+        {c.maxDrawdownFromEntryPct != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1">
+            Max DD from entry <span className="font-bold text-[var(--color-fg-default)]">{(c.maxDrawdownFromEntryPct as number).toFixed(1)}%</span>
+          </span>
+        ) : null}
+      </div>
+
       {concentrated ? (
         <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/8 px-3 py-2 text-[11px] text-yellow-300">
           ⚠ Position exceeds 10% portfolio weight — concentration risk
@@ -979,6 +1102,7 @@ function RiskSection({ content: c }: { content: Rec }) {
       ) : null}
 
       {c.riskFacts ? <BodyText text={c.riskFacts as string} /> : null}
+      <SourceLinks sources={c.sources} />
     </div>
   );
 }
@@ -986,9 +1110,19 @@ function RiskSection({ content: c }: { content: Rec }) {
 function QuickCheckSection({ content: c }: { content: Rec }) {
   const score = c.score as number | null | undefined;
   const signals = c.signals as string[] | undefined;
-  const stratHealth = c.strategy_health as string[] | undefined;
+  // Support both new (camelCase) and legacy (snake_case) shapes.
+  const stratHealth = (c.thesisHealth ?? c.strategy_health) as string[] | undefined;
   const decision = (c.decision as string) ?? "";
-  const advisorReasons = c.advisor_reasons as string[] | undefined;
+  const advisorSummary = (c.advisorSummary ?? c.advisor_summary) as string | undefined;
+  const advisorReasons = (c.advisorReasons ?? c.advisor_reasons) as string[] | undefined;
+  const newsHeadline = (c.newsHeadline ?? c.news_headline) as string | undefined;
+  const dayChangePct = (c.dayChangePct ?? c.day_change_pct) as number | null | undefined;
+  const escalationReason = (c.escalationReason ?? c.escalation_reason) as string | undefined;
+  const expiry = c.catalystExpiryCheck as Rec | undefined;
+  const expiredCount = (expiry?.expiredCount as number) ?? 0;
+  const nearingExpiry = (expiry?.nearingExpiry as string[]) ?? [];
+  const alignment = c.thesisAlignmentFlag as string | undefined;
+  const daysSinceDD = c.daysSinceLastDeepDive as number | null | undefined;
 
   const decisionStyle =
     decision === "safe"
@@ -997,11 +1131,14 @@ function QuickCheckSection({ content: c }: { content: Rec }) {
         ? "border-red-500/25 bg-red-500/10 text-red-300"
         : "border-yellow-500/25 bg-yellow-500/10 text-yellow-300";
 
+  const decisionLabel = decision === "not_safe" ? "escalate" : decision || "—";
+
   return (
     <div className="space-y-5">
+      {/* Score gauge + decision badge row */}
       <div className="flex items-start gap-4">
         {score !== null && score !== undefined ? (
-          <div className="relative h-14 w-14 shrink-0">
+          <div className="relative h-16 w-16 shrink-0">
             <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
               <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-[var(--color-border)]" />
               <circle
@@ -1015,26 +1152,74 @@ function QuickCheckSection({ content: c }: { content: Rec }) {
                 className={score >= 70 ? "text-emerald-400" : score >= 40 ? "text-yellow-400" : "text-red-400"}
               />
             </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-[var(--color-fg-default)]">
-              {score}
+            <span className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-sm font-bold text-[var(--color-fg-default)]">{score}</span>
+              <span className="text-[8px] text-[var(--color-fg-subtle)] uppercase tracking-wide">health</span>
             </span>
           </div>
         ) : null}
-        <div className="space-y-1.5">
-          <span className={`inline-block rounded-full border px-2.5 py-1 text-[11px] font-medium ${decisionStyle}`}>
-            {decision === "not_safe" ? "escalate" : decision || "—"}
+        <div className="flex-1 space-y-1.5">
+          <span className={`inline-block rounded-full border px-2.5 py-1 text-[11px] font-semibold ${decisionStyle}`}>
+            {decisionLabel === "safe" ? "✓ Safe" : decisionLabel === "watch" ? "⚠ Watch" : "⚡ Escalate"}
           </span>
           {score !== null && score !== undefined ? (
             <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">
               {scoreBucketEmoji(score)} {scoreBucketLabel(score)} — {scoreExplanation(score)}
             </p>
           ) : null}
-          {c.escalation_reason ? (
-            <p className="text-[11px] text-[var(--color-fg-muted)]">{c.escalation_reason as string}</p>
+          {escalationReason ? (
+            <p className="text-[11px] text-red-400">{escalationReason}</p>
+          ) : null}
+          {/* Day change inline */}
+          {dayChangePct !== null && dayChangePct !== undefined ? (
+            <p className={`text-[11px] font-semibold tabular-nums ${dayChangePct > 0 ? "text-emerald-400" : dayChangePct < 0 ? "text-red-400" : "text-[var(--color-fg-subtle)]"}`}>
+              {dayChangePct > 0 ? "+" : ""}{dayChangePct.toFixed(2)}% today
+            </p>
           ) : null}
         </div>
       </div>
 
+      {/* Latest news */}
+      {newsHeadline ? (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">Latest</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-[var(--color-fg-default)]">{newsHeadline}</p>
+        </div>
+      ) : null}
+
+      {/* New: catalyst expiry + thesis alignment + days since deep dive */}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {expiredCount > 0 ? (
+          <span className="rounded-full border border-red-500/25 bg-red-500/10 px-2.5 py-1 text-red-300">
+            ⚠ {expiredCount} catalyst{expiredCount === 1 ? "" : "s"} expired
+          </span>
+        ) : null}
+        {nearingExpiry.length > 0 ? (
+          <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-amber-300">
+            ⏰ {nearingExpiry.length} expiring within 7d
+          </span>
+        ) : null}
+        {alignment ? (
+          <span
+            className={`rounded-full border px-2.5 py-1 font-medium ${
+              alignment === "aligned"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                : alignment === "diverging"
+                  ? "border-red-500/25 bg-red-500/10 text-red-300"
+                  : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
+            }`}
+          >
+            Thesis: {alignment}
+          </span>
+        ) : null}
+        {daysSinceDD != null ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1 text-[var(--color-fg-muted)]">
+            {daysSinceDD}d since deep dive
+          </span>
+        ) : null}
+      </div>
+
+      {/* Signals */}
       {signals && signals.length > 0 ? (
         <div>
           <p className="mb-2 text-xs font-bold text-[var(--color-fg-default)]">Signals</p>
@@ -1051,39 +1236,60 @@ function QuickCheckSection({ content: c }: { content: Rec }) {
         </div>
       ) : null}
 
+      {/* Strategy health check */}
       {stratHealth && stratHealth.length > 0 ? (
         <div>
-          <p className="mb-1.5 text-xs font-bold text-[var(--color-fg-default)]">Strategy health</p>
+          <p className="mb-1.5 text-xs font-bold text-[var(--color-fg-default)]">Thesis health</p>
           <div className="space-y-1">
             {stratHealth.map((s) => (
-              <p key={s} className="text-[11px] text-[var(--color-fg-muted)]">· {s}</p>
+              <p key={s} className="text-[11px] text-[var(--color-fg-muted)]">
+                <span className="mr-1 text-[var(--color-fg-subtle)]">·</span>{s}
+              </p>
             ))}
           </div>
         </div>
       ) : null}
 
-      {c.advisor_summary ? <BodyText text={c.advisor_summary as string} /> : null}
+      {advisorSummary ? <BodyText text={advisorSummary} /> : null}
 
       {advisorReasons && advisorReasons.length > 0 ? (
         <div className="space-y-1">
           {advisorReasons.map((r) => (
-            <p key={r} className="text-[11px] text-[var(--color-fg-muted)]">· {r}</p>
+            <p key={r} className="text-[11px] text-[var(--color-fg-muted)]">
+              <span className="mr-1 text-[var(--color-fg-subtle)]">·</span>{r}
+            </p>
           ))}
         </div>
       ) : null}
+
+      <SourceLinks sources={c.sources} />
     </div>
   );
 }
 
 function StrategySection({ content: c }: { content: Rec }) {
-  type Catalyst = { description: string; expiresAt: string | null; triggered: boolean };
+  type Catalyst = import("../types/api").StrategyCatalyst;
   const catalysts = c.catalysts as Catalyst[] | undefined;
   const verdict = isVerdict(c.verdict) ? c.verdict : null;
   const confidence = typeof c.confidence === "string" ? c.confidence : null;
   const reasoning = typeof c.reasoning === "string" ? reasoningSnippet(c.reasoning, 200) : "";
+  const thesis = typeof c.thesis === "string" ? c.thesis : null;
+  const keyRisks = (c.keyRisks as string[]) ?? [];
+  const evidence = c.evidenceSummary as Rec | undefined;
+  const supporting = (evidence?.supporting as string[]) ?? [];
+  const conflicting = (evidence?.conflicting as string[]) ?? [];
+  const uncertainties = (evidence?.uncertainties as string[]) ?? [];
 
   return (
     <div className="space-y-4">
+      {/* Thesis anchor */}
+      {thesis ? (
+        <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-sky-400">Thesis</p>
+          <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-fg-default)]">{thesis}</p>
+        </div>
+      ) : null}
+
       {/* Verdict + confidence row */}
       <div className="flex items-center gap-2 flex-wrap">
         {verdict ? (
@@ -1102,29 +1308,76 @@ function StrategySection({ content: c }: { content: Rec }) {
       {/* Short reasoning */}
       {reasoning ? <BodyText text={reasoning} /> : null}
 
-      {/* Catalysts */}
+      {/* Key risks */}
+      {keyRisks.length > 0 ? (
+        <div>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-fg-subtle)]">Key risks</p>
+          <div className="space-y-1">
+            {keyRisks.slice(0, 5).map((r) => (
+              <p key={r} className="text-[11px] text-[var(--color-fg-muted)]">
+                <span className="mr-1 text-red-400">·</span>{r}
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Evidence summary */}
+      {(supporting.length || conflicting.length || uncertainties.length) ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {supporting.length > 0 ? (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/6 px-2.5 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-400">Supporting</p>
+              {supporting.slice(0, 3).map((s) => (
+                <p key={s} className="mt-1 text-[10px] leading-snug text-[var(--color-fg-muted)]">· {s}</p>
+              ))}
+            </div>
+          ) : null}
+          {conflicting.length > 0 ? (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/6 px-2.5 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-red-400">Conflicting</p>
+              {conflicting.slice(0, 3).map((s) => (
+                <p key={s} className="mt-1 text-[10px] leading-snug text-[var(--color-fg-muted)]">· {s}</p>
+              ))}
+            </div>
+          ) : null}
+          {uncertainties.length > 0 ? (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/6 px-2.5 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-amber-400">Uncertain</p>
+              {uncertainties.slice(0, 3).map((s) => (
+                <p key={s} className="mt-1 text-[10px] leading-snug text-[var(--color-fg-muted)]">· {s}</p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Staleness + next review/earnings */}
+      <div className="flex flex-wrap gap-2 text-[10px]">
+        {c.nextReviewAt ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2 py-0.5 text-[var(--color-fg-muted)]">
+            Next review: <span className="font-medium text-[var(--color-fg-default)]">{new Date(c.nextReviewAt as string).toLocaleDateString()}</span>
+          </span>
+        ) : null}
+        {c.nextEarningsDate ? (
+          <span className="rounded-full border border-sky-500/25 bg-sky-500/10 px-2 py-0.5 text-sky-300">
+            📅 Earnings: {c.nextEarningsDate as string}
+          </span>
+        ) : null}
+        {c.lastDeepDiveAt ? (
+          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2 py-0.5 text-[var(--color-fg-subtle)]">
+            Last deep dive: {new Date(c.lastDeepDiveAt as string).toLocaleDateString()}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Catalysts — structured table */}
       {catalysts && catalysts.length > 0 ? (
         <div>
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-fg-subtle)]">Catalysts</p>
-          <div className="flex flex-wrap gap-1.5">
-            {catalysts.map((cat, i) => {
-              const expired = cat.expiresAt && new Date(cat.expiresAt) < new Date() && !cat.triggered;
-              return (
-                <span
-                  key={i}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                    cat.triggered
-                      ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-400"
-                      : expired
-                      ? "border-red-500/30 bg-red-500/8 text-red-400"
-                      : "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
-                  }`}
-                >
-                  {cat.triggered ? "✓" : expired ? "⚠" : "◦"} {formatCatalyst(cat)}
-                </span>
-              );
-            })}
-          </div>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-fg-subtle)]">
+            Catalysts ({catalysts.length})
+          </p>
+          <CatalystTable catalysts={catalysts} />
         </div>
       ) : null}
 
@@ -1149,20 +1402,35 @@ function StrategySection({ content: c }: { content: Rec }) {
   );
 }
 
-function BullBearSection({ bull, bear }: { bull: Rec | null; bear: Rec | null }) {
+function BullBearSection({
+  bull,
+  bear,
+  debate,
+}: {
+  bull: Rec | null;
+  bear: Rec | null;
+  debate?: Rec | null;
+}) {
   if (!bull && !bear) {
-    return <p className="text-sm text-[var(--color-fg-muted)]">No bull/bear analysis available.</p>;
+    return (
+      <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-[var(--color-border)] py-8 text-center">
+        <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">Bull/Bear analysis not available</p>
+        <p className="text-[10px] text-[var(--color-fg-subtle)]">Run a Deep Dive to generate structured bull and bear cases</p>
+      </div>
+    );
   }
 
   function renderArgs(args: unknown) {
-    if (!Array.isArray(args)) return null;
+    if (!Array.isArray(args) || args.length === 0) return null;
     return (
       <div className="space-y-2">
         {(args as Rec[]).map((arg, i) => (
-          <div key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2">
-            <p className="text-[11px] font-medium text-[var(--color-fg-default)]">{arg.claim as string}</p>
+          <div key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2.5">
+            <p className="text-[11px] font-semibold text-[var(--color-fg-default)]">{arg.claim as string}</p>
             {arg.dataPoint ? (
-              <p className="mt-0.5 text-[10px] text-[var(--color-fg-subtle)]">{arg.dataPoint as string}</p>
+              <p className="mt-1 text-[10px] leading-snug text-[var(--color-fg-subtle)]">
+                📊 {arg.dataPoint as string}
+              </p>
             ) : null}
           </div>
         ))}
@@ -1172,18 +1440,99 @@ function BullBearSection({ bull, bear }: { bull: Rec | null; bear: Rec | null })
 
   return (
     <div className="space-y-5">
+      {/* Debate resolution — shown first if available */}
+      {debate?.resolution ? (
+        <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-4 py-3">
+          <p className="mb-1 text-[9px] font-bold uppercase tracking-widest text-sky-400">Debate verdict</p>
+          <p className="text-[12px] leading-relaxed text-[var(--color-fg-default)]">
+            {debate.resolution as string}
+          </p>
+          {(debate.keySwingFactor ?? debate.key_swing_factor) ? (
+            <p className="mt-2 text-[10px] text-sky-300">
+              Key swing factor: <span className="font-medium">{(debate.keySwingFactor ?? debate.key_swing_factor) as string}</span>
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+            {debate.verdictChange ? (
+              <span className="rounded-full border border-amber-500/25 bg-amber-500/8 px-2 py-0.5 text-amber-300">
+                Verdict change: {debate.verdictChange as string}
+              </span>
+            ) : null}
+            {debate.baseCasePriceTarget != null ? (
+              <span className="rounded-full border border-sky-500/25 bg-sky-500/8 px-2 py-0.5 text-sky-300">
+                Base case target: ${(debate.baseCasePriceTarget as number).toFixed(2)}
+              </span>
+            ) : null}
+            {(debate.confidenceModifier ?? debate.confidence_modifier) &&
+            (debate.confidenceModifier ?? debate.confidence_modifier) !== "unchanged" ? (
+              <span
+                className={`rounded-full border px-2 py-0.5 font-medium ${
+                  ((debate.confidenceModifier ?? debate.confidence_modifier) as string).startsWith("+")
+                    ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-400"
+                    : "border-red-500/25 bg-red-500/8 text-red-400"
+                }`}
+              >
+                Confidence {(debate.confidenceModifier ?? debate.confidence_modifier) as string}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Side-by-side headers with price targets + probability */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/6 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-400">Bull case</p>
+          {bull?.coreThesis ? (
+            <p className="mt-1 text-[11px] leading-snug text-[var(--color-fg-muted)] line-clamp-3">
+              {bull.coreThesis as string}
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+            {bull?.priceTarget12m != null ? (
+              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-bold text-emerald-300">
+                ${(bull.priceTarget12m as number).toFixed(2)} 12m
+              </span>
+            ) : null}
+            {bull?.probabilityEstimate != null ? (
+              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">
+                {bull.probabilityEstimate as number}% likely
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/6 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-red-400">Bear case</p>
+          {bear?.coreConcern ? (
+            <p className="mt-1 text-[11px] leading-snug text-[var(--color-fg-muted)] line-clamp-3">
+              {bear.coreConcern as string}
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+            {bear?.priceTarget12m != null ? (
+              <span className="rounded-full bg-red-500/15 px-2 py-0.5 font-bold text-red-300">
+                ${(bear.priceTarget12m as number).toFixed(2)} 12m
+              </span>
+            ) : null}
+            {bear?.probabilityEstimate != null ? (
+              <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-red-300">
+                {bear.probabilityEstimate as number}% likely
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {/* Bull arguments */}
       {bull ? (
         <div>
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-emerald-400">
-            Bull case {bull.round ? `· Round ${bull.round as number}` : ""}
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+            Bull arguments
           </p>
-          {bull.coreThesis ? (
-            <p className="mb-3 text-sm font-medium text-emerald-300">{bull.coreThesis as string}</p>
-          ) : null}
           {renderArgs(bull.arguments)}
           {bull.conditionToBeWrong ? (
-            <p className="mt-2 text-[11px] italic text-[var(--color-fg-subtle)]">
-              Wrong if: {bull.conditionToBeWrong as string}
+            <p className="mt-2 rounded-lg border border-emerald-500/15 bg-emerald-500/6 px-3 py-1.5 text-[10px] italic text-emerald-400">
+              ✗ Wrong if: {bull.conditionToBeWrong as string}
             </p>
           ) : null}
         </div>
@@ -1191,18 +1540,16 @@ function BullBearSection({ bull, bear }: { bull: Rec | null; bear: Rec | null })
 
       {bull && bear ? <hr className="border-[var(--color-border)]" /> : null}
 
+      {/* Bear arguments */}
       {bear ? (
         <div>
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-red-400">
-            Bear case {bear.round ? `· Round ${bear.round as number}` : ""}
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-red-400">
+            Bear arguments
           </p>
-          {bear.coreConcern ? (
-            <p className="mb-3 text-sm font-medium text-red-300">{bear.coreConcern as string}</p>
-          ) : null}
           {renderArgs(bear.arguments)}
           {bear.conditionToBeWrong ? (
-            <p className="mt-2 text-[11px] italic text-[var(--color-fg-subtle)]">
-              Wrong if: {bear.conditionToBeWrong as string}
+            <p className="mt-2 rounded-lg border border-red-500/15 bg-red-500/6 px-3 py-1.5 text-[10px] italic text-red-400">
+              ✗ Wrong if: {bear.conditionToBeWrong as string}
             </p>
           ) : null}
         </div>
@@ -1223,6 +1570,7 @@ function AnalystTabContent({
       <BullBearSection
         bull={getReportContent(detailReports, "bull_case")}
         bear={getReportContent(detailReports, "bear_case")}
+        debate={getReportContent(detailReports, "debate")}
       />
     );
   }
@@ -1230,9 +1578,9 @@ function AnalystTabContent({
   const content = getReportContent(detailReports, reportType);
   if (!content) {
     return (
-      <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-[var(--color-border)] py-6 text-center">
+      <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-[var(--color-border)] py-8 text-center">
         <p className="text-[11px] font-medium text-[var(--color-fg-muted)]">{TAB_LABELS[reportType]} not available</p>
-        <p className="text-[10px] text-[var(--color-fg-subtle)]">This report was not generated for this batch</p>
+        <p className="text-[10px] text-[var(--color-fg-subtle)]">This analysis was not generated for this report</p>
       </div>
     );
   }
@@ -1249,7 +1597,36 @@ function AnalystTabContent({
   }
 }
 
-// ─── Ticker detail modal (opened when tapping a row in daily_brief) ─────────
+// ─── Ticker detail modal ─────────────────────────────────────────────────────
+// Renders differently depending on the parent feed item's mode:
+//   daily_brief → concise "what changed" snapshot — no fetch, no tabs
+//   full_report / deep_dive → full strategy view with fetched analyst report tabs
+
+const MODAL_OVERLAY_STYLE: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 60,
+  background: "rgba(0,0,0,0.65)",
+  backdropFilter: "blur(4px)",
+  display: "flex",
+  alignItems: "stretch",
+  justifyContent: "center",
+  paddingTop: "5vh",
+  paddingBottom: "5vh",
+};
+
+const MODAL_PANEL_STYLE: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 560,
+  background: "var(--bg-base)",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+  borderRadius: 16,
+  border: "1px solid rgba(255,255,255,0.18)",
+  boxShadow:
+    "0 0 0 1px rgba(255,255,255,0.06), 0 24px 80px rgba(0,0,0,0.85), 0 8px 32px rgba(0,0,0,0.6)",
+};
 
 function TickerDetailModal({
   item,
@@ -1261,110 +1638,275 @@ function TickerDetailModal({
   onClose: () => void;
 }) {
   const entry = item.entries[ticker];
-  const reportTypes: DetailReportType[] = ["strategy"];
-  const visibleTabs = reportTypes as DetailReportType[];
-  const [activeTab, setActiveTab] = useState<DetailReportType>("strategy");
+  const verdict = entry?.verdict as string | undefined;
+  const confidence = entry?.confidence as string | undefined;
+  const dayChangePct = entry?.dayChangePct as number | undefined;
+  const hasDay = dayChangePct != null && dayChangePct !== 0;
+  const dayColor = hasDay
+    ? dayChangePct! > 0 ? "text-emerald-400" : "text-red-400"
+    : "text-[var(--color-fg-subtle)]";
 
-  const batchId = item.batchId ?? item.id;
-  const { data: detailReports, isLoading } = useQuery({
-    queryKey: ["detail-reports-modal", batchId, ticker],
-    queryFn: () => fetchDetailReports(batchId, ticker, reportTypes),
-    enabled: !!batchId && !!ticker,
+  // Whether this is a full strategy report (full_report or deep_dive).
+  // These modes run the complete 7-specialist agent crew and save full analyst reports to DB.
+  const isFullReport = item.mode === "full_report" || item.mode === "deep_dive";
+
+  // Analyst report tabs — only used for full_report / deep_dive
+  const reportTypes = isFullReport ? reportTypesForItem(item) : [];
+  const visibleTabs = reportTypes.filter((t) => t !== "bear_case");
+  const [activeTab, setActiveTab] = useState<DetailReportType>(
+    visibleTabs[0] ?? "strategy"
+  );
+
+  const { data: detailReports, isLoading: detailsLoading } = useQuery({
+    queryKey: ["detailReports", item.id, ticker, reportTypes.join(",")],
+    queryFn: () => fetchDetailReports(item.id, ticker, reportTypes),
+    enabled: isFullReport && reportTypes.length > 0,
     staleTime: 5 * 60 * 1000,
   });
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
-
-  const verdict = entry?.verdict;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       onClick={(e) => e.target === e.currentTarget && onClose()}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 60,
-        background: "rgba(0,0,0,0.55)",
-        backdropFilter: "blur(6px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "16px",
-      }}
+      style={MODAL_OVERLAY_STYLE}
     >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 480,
-          background: "var(--color-bg-subtle, var(--bg-base))",
-          borderRadius: 16,
-          maxHeight: "80vh",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          border: "1px solid var(--color-border)",
-          boxShadow: "0 24px 48px rgba(0,0,0,0.4)",
-        }}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
-          <span className="font-mono text-[13px] font-bold text-[var(--color-fg-default)]">{ticker}</span>
-          {verdict ? (
-            <VerdictBadge verdict={verdict} size="sm" />
+      <div style={MODAL_PANEL_STYLE}>
+        {/* ── Header — shared ── */}
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-white/5 px-4 py-3">
+          <TickerLogo ticker={ticker} size={22} />
+          <span className="font-mono text-[13px] font-bold text-[var(--color-fg-default)]">
+            {ticker}
+          </span>
+          {verdict ? <VerdictBadge verdict={verdict} size="sm" /> : null}
+          {isFullReport && confidence ? (
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">
+              {confidence}
+            </span>
+          ) : null}
+          {hasDay && !isFullReport ? (
+            <span className={`text-[12px] font-bold tabular-nums ${dayColor}`}>
+              {dayChangePct! > 0 ? "+" : ""}
+              {dayChangePct!.toFixed(2)}%
+            </span>
+          ) : null}
+          {isFullReport && entry?.timeframe ? (
+            <span className="ml-1 text-[10px] text-[var(--color-fg-subtle)] uppercase tracking-wide">
+              {entry.timeframe as string}
+            </span>
           ) : null}
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto shrink-0 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[10px] text-[var(--color-fg-muted)] hover:border-[var(--color-fg-subtle)] hover:text-[var(--color-fg-default)]"
+            className="ml-auto shrink-0 flex h-6 w-6 items-center justify-center rounded-full border border-white/5 bg-[var(--color-bg-muted)] text-[10px] text-[var(--color-fg-muted)] hover:border-white/10 hover:text-[var(--color-fg-default)]"
           >
             ✕
           </button>
         </div>
 
-        {/* Entry reason — always available, no API needed */}
-        {(entry?.moveReason ?? entry?.reasoning) ? (
-          <div className="border-b border-[var(--color-border)] px-4 py-3">
-            <p className="mb-1 text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">Reason</p>
-            <p className="text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
-              {entry.moveReason ?? entry.reasoning}
-            </p>
+        {/* ── DAILY BRIEF / QUICK CHECK body — concise "what changed" ── */}
+        {!isFullReport ? (
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {/* Confidence + verdict sentence */}
+            <div className="flex flex-wrap items-center gap-2">
+              {confidence ? (
+                <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-[var(--color-fg-subtle)]">
+                  {confidence} confidence
+                </span>
+              ) : null}
+              {verdict ? (
+                <span className="text-[12px] text-[var(--color-fg-muted)]">
+                  {verdictSentence(verdict as Parameters<typeof verdictSentence>[0])}
+                </span>
+              ) : null}
+            </div>
+
+            {/* Quick check: health score + decision badge */}
+            {item.mode === "quick_check" && entry?.healthScore != null ? (
+              <div className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2.5">
+                <div className="relative h-10 w-10 shrink-0">
+                  <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
+                    <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="4" className="text-[var(--color-border)]" />
+                    <circle
+                      cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="4"
+                      strokeDasharray={`${(entry.healthScore / 100) * 87.96} 87.96`}
+                      className={entry.healthScore >= 70 ? "text-emerald-400" : entry.healthScore >= 40 ? "text-yellow-400" : "text-red-400"}
+                    />
+                  </svg>
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-[var(--color-fg-default)]">{entry.healthScore}</span>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-[var(--color-fg-default)] capitalize">
+                    {entry.decision === "escalate" ? "⚡ Escalate" : entry.decision === "watch" ? "⚠ Watch" : "✓ Safe"}
+                  </p>
+                  {entry.keyAlerts && entry.keyAlerts.length > 0 ? (
+                    <p className="text-[10px] text-[var(--color-fg-muted)] line-clamp-2">{entry.keyAlerts.join(" · ")}</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Today's news headline (daily brief + quick check) */}
+            {entry?.newsHeadline ? (
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">Latest news</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-[var(--color-fg-default)]">{entry.newsHeadline}</p>
+                {entry.newsUrl ? (
+                  <a href={entry.newsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 flex items-center gap-1 text-[10px] text-[var(--color-fg-subtle)] hover:text-[var(--color-fg-muted)]">
+                    Read more <ExternalLink size={9} />
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Why — concise reasoning / move reason */}
+            {((entry?.moveReason ?? entry?.reasoning) as string | undefined) ? (
+              <div>
+                <p className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">
+                  {item.mode === "daily_brief" ? "What moved it" : "Assessment"}
+                </p>
+                <p className="text-[12px] leading-relaxed text-[var(--color-fg-muted)]">
+                  {reasoningSnippet(
+                    (entry?.moveReason ?? entry?.reasoning) as string,
+                    300
+                  )}
+                </p>
+              </div>
+            ) : null}
+
+            {/* Day change + volume flag */}
+            <div className="flex items-center gap-3">
+              {hasDay ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-fg-subtle)]">Today</span>
+                  <span className={`text-[13px] font-bold tabular-nums ${dayColor}`}>
+                    {dayChangePct! > 0 ? "+" : ""}{dayChangePct!.toFixed(2)}%
+                  </span>
+                </div>
+              ) : null}
+              {entry?.volumeFlag && entry.volumeFlag !== "normal" ? (
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  entry.volumeFlag === "elevated"
+                    ? "border-amber-500/25 bg-amber-500/10 text-amber-300"
+                    : "border-[var(--color-border)] text-[var(--color-fg-subtle)]"
+                }`}>
+                  Vol {entry.volumeFlag}
+                </span>
+              ) : null}
+              {entry?.relativeStrength ? (
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                    entry.relativeStrength === "outperforming"
+                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+                      : entry.relativeStrength === "underperforming"
+                        ? "border-red-500/25 bg-red-500/10 text-red-300"
+                        : "border-[var(--color-border)] text-[var(--color-fg-subtle)]"
+                  }`}
+                >
+                  vs sector: {entry.relativeStrength}
+                </span>
+              ) : null}
+              {entry?.sectorChangePct != null ? (
+                <span className="text-[10px] text-[var(--color-fg-subtle)]">
+                  Sector {entry.sectorChangePct > 0 ? "+" : ""}{entry.sectorChangePct.toFixed(2)}%
+                </span>
+              ) : null}
+            </div>
+
+            {/* Deep dive debate resolution (deep_dive only) */}
+            {entry?.debateResolution ? (
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 px-3 py-2.5">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-sky-400">Debate verdict</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-[var(--color-fg-default)]">{entry.debateResolution}</p>
+                {entry.keySwingFactor ? (
+                  <p className="mt-1 text-[10px] text-sky-300">
+                    Key factor: <span className="font-medium">{entry.keySwingFactor}</span>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Escalation / deep-dive CTA */}
+            {(entry?.needsEscalation || entry?.deepDiveQueued) ? (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/6 px-3 py-2.5">
+                <p className="text-[11px] font-medium text-amber-300">
+                  {entry?.deepDiveQueued
+                    ? "Deep dive has been queued for this position."
+                    : "A closer look is recommended — consider running a deep dive."}
+                </p>
+                {entry?.escalationReason ? (
+                  <p className="mt-0.5 text-[10px] text-amber-400/80">{entry.escalationReason}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
-        {/* Tab bar */}
-        <div className="flex shrink-0 border-b border-[var(--color-border)] px-4">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`mr-5 shrink-0 border-b-2 pb-2.5 pt-2.5 text-[11px] font-semibold tracking-wide transition-colors ${
-                activeTab === tab
-                  ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
-                  : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
-              }`}
-            >
-              {TAB_LABELS[tab]}
-            </button>
-          ))}
-        </div>
+        {/* ── FULL REPORT / DEEP DIVE body — complete strategy with analyst tabs ── */}
+        {isFullReport ? (
+          <>
+            {/* Strategy summary strip — always visible above tabs */}
+            {entry?.reasoning ? (
+              <div className="shrink-0 border-b border-white/5 px-4 py-3">
+                <p className="text-[11px] leading-relaxed text-[var(--color-fg-muted)]">
+                  {reasoningSnippet(entry.reasoning as string, 200)}
+                </p>
+                {(entry.hasBullCase || entry.hasBearCase) ? (
+                  <p className="mt-1.5 text-[9px] text-[var(--color-fg-subtle)]">
+                    {[entry.hasBullCase && "Bull case", entry.hasBearCase && "Bear case"]
+                      .filter(Boolean)
+                      .join(" · ")}{" "}
+                    available in Bull vs Bear tab
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
-        {/* Tab content */}
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {isLoading ? (
-            <div className="flex justify-center py-10">
-              <Spinner size="md" />
+            {/* Tab bar */}
+            {visibleTabs.length > 0 ? (
+              <div className="shrink-0 overflow-x-auto border-b border-white/5">
+                <div className="flex min-w-max px-4">
+                  {visibleTabs.map((tabType) => (
+                    <button
+                      key={tabType}
+                      type="button"
+                      onClick={() => setActiveTab(tabType)}
+                      className={`mr-5 shrink-0 border-b-2 pb-2.5 pt-2 text-[11px] font-semibold tracking-wide transition-colors ${
+                        activeTab === tabType
+                          ? "border-[var(--color-accent-blue)] text-[var(--color-fg-default)]"
+                          : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
+                      }`}
+                    >
+                      {TAB_LABELS[tabType]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Tab content */}
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              {detailsLoading ? (
+                <div className="flex justify-center py-10">
+                  <Spinner size="md" />
+                </div>
+              ) : (
+                <AnalystTabContent
+                  reportType={activeTab}
+                  detailReports={detailReports}
+                />
+              )}
             </div>
-          ) : (
-            <AnalystTabContent reportType={activeTab} detailReports={detailReports} />
-          )}
-        </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -1532,44 +2074,32 @@ function ReportCard({
   const { escalated } = groupEntries(entries);
   const selectedEntry = selectedTicker ? item.entries[selectedTicker] : entries[0];
   const isMultiTicker = item.tickers.length > 1;
-  const isBriefMode = item.mode === "daily_brief" || item.mode === "full_report";
-  const trackingEntry = !isBriefMode && selectedEntry?.assetScope === "tracking" ? selectedEntry : null;
+
+  // Modes that use the entry-table + modal pattern (multi-ticker, clickable rows)
+  const isTableMode = item.mode === "daily_brief" || item.mode === "full_report";
+  // Modes that show analyst tabs inline in the card
+  const hasAnalystTabs = item.mode === "deep_dive" || item.mode === "full_report" || item.mode === "quick_check";
+
   const portfolioDailyEntries = entries.filter((entry) => entry.dailySection !== "tracking");
   const trackingDailyEntries = entries.filter((entry) => entry.dailySection === "tracking");
-  const trackingActionEntries = trackingDailyEntries.filter((entry) => entry.needsEscalation);
-  const portfolioMovers = portfolioDailyEntries
-    .filter((entry) => Number.isFinite(entry.dayChangePct))
-    .sort((a, b) => Math.abs(b.dayChangePct ?? 0) - Math.abs(a.dayChangePct ?? 0))
-    .slice(0, 5);
   const dailyEntries = portfolioDailyEntries.filter((entry) => entry.mode === "daily_brief");
   const hasDailyQueueMetadata = dailyEntries.some(
     (entry) => typeof entry.needsEscalation === "boolean" || typeof entry.deepDiveQueued === "boolean"
   );
-  const queuedDailyEntries = dailyEntries.filter((entry) => entry.deepDiveQueued);
   const attentionDailyEntries = dailyEntries.filter((entry) => {
     const needsAttention = hasDailyQueueMetadata
       ? entry.needsEscalation === true
       : entry.reasoning !== "On track";
     return needsAttention && !entry.deepDiveQueued;
   });
-  const nextWatchText =
-    item.mode === "daily_brief" && !hasDailyQueueMetadata && attentionDailyEntries.length > 0
-      ? "These positions were flagged for attention. This older daily brief did not store exact auto-queue metadata, so it should not be read as proof that every listed ticker had a deep dive queued."
-      : item.dailyBrief?.tomorrow;
   const orderedEntries = sortEntriesForReview(entries);
-  const topEntries = orderedEntries.slice(0, 1);
   const flaggedCount = escalated.length + attentionDailyEntries.length;
-  const badgeTone = flaggedCount > 0 ? "warning" : trackingDailyEntries.length > 0 ? "info" : "default";
-  const summaryMetrics = [
-    {
-      label: "Coverage",
-      value: isBriefMode
-        ? `${item.tickerCount} positions`
-        : `${selectedEntry?.ticker ?? item.tickers[0] ?? "—"}`,
-    },
-  ];
-  // Tabs: don't show bear_case as its own tab (rendered inside bull_case tab)
-  const visibleTabs = expandedReportTypes.filter((t) => t !== "bear_case");
+
+  // Tabs: don't show bear_case or debate as their own tabs (rendered inside bull_case tab)
+  const visibleTabs = expandedReportTypes.filter((t) => t !== "bear_case" && t !== "debate");
+
+  // Quick check: derive health data from first entry
+  const qcEntry = item.mode === "quick_check" ? selectedEntry : null;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] shadow-sm">
@@ -1592,17 +2122,37 @@ function ReportCard({
           {/* Mode label + key detail */}
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             <span className="shrink-0 text-[11px] font-semibold text-[var(--color-fg-muted)]">{meta.label}</span>
-            {isBriefMode ? (
+            {isTableMode ? (
               <span className="shrink-0 rounded-full bg-[var(--color-bg-muted)] px-1.5 py-0.5 text-[9px] text-[var(--color-fg-subtle)]">
                 {item.tickerCount}
               </span>
             ) : selectedEntry ? (
               <span className="shrink-0 font-mono text-[11px] font-bold text-[var(--color-fg-default)]">{selectedEntry.ticker}</span>
             ) : null}
-            {!isBriefMode && selectedEntry?.verdict ? (
+            {!isTableMode && selectedEntry?.verdict ? (
               <VerdictBadge verdict={selectedEntry.verdict} size="sm" />
             ) : null}
-            {isBriefMode && flaggedCount > 0 ? (
+            {/* Quick check: show health score in header */}
+            {item.mode === "quick_check" && qcEntry?.healthScore != null ? (
+              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                qcEntry.healthScore >= 70 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : qcEntry.healthScore >= 40 ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+                : "border-red-500/30 bg-red-500/10 text-red-400"
+              }`}>
+                {qcEntry.healthScore}
+              </span>
+            ) : null}
+            {/* Quick check: decision label */}
+            {item.mode === "quick_check" && qcEntry?.decision ? (
+              <span className={`shrink-0 text-[10px] font-semibold ${
+                qcEntry.decision === "escalate" ? "text-red-400"
+                : qcEntry.decision === "watch" ? "text-yellow-400"
+                : "text-emerald-400"
+              }`}>
+                {qcEntry.decision === "escalate" ? "⚡ escalate" : qcEntry.decision === "watch" ? "⚠ watch" : "✓ safe"}
+              </span>
+            ) : null}
+            {isTableMode && flaggedCount > 0 ? (
               <span className="shrink-0 text-[10px] font-medium text-yellow-400">⚠ {flaggedCount}</span>
             ) : null}
           </div>
@@ -1622,15 +2172,15 @@ function ReportCard({
         <div className="bg-[var(--color-bg-base)] px-3 pb-3 pt-2.5">
           <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
             {/* ── Entry summary — always visible without API fetch ── */}
-            {item.dailyBrief ? (
+            {isTableMode ? (
               /* Case A: daily_brief / full_report — clickable table; tapping a row opens detail modal */
               <EntryTable
                 entries={orderedEntries}
                 onSelectTicker={setModalTicker}
                 footer={
-                  (item.dailyBrief.tomorrow ?? item.dailyBrief.marketView) ? (
+                  (item.dailyBrief?.tomorrow ?? item.dailyBrief?.marketView) ? (
                     <p className="text-[10px] text-[var(--color-fg-subtle)]">
-                      {item.dailyBrief.tomorrow ?? item.dailyBrief.marketView}
+                      {item.dailyBrief?.tomorrow ?? item.dailyBrief?.marketView}
                     </p>
                   ) : null
                 }
@@ -1639,9 +2189,8 @@ function ReportCard({
               /* Case B: non-brief multi-ticker (deep dive batch) — table with tab-nav selection */
               <EntryTable entries={orderedEntries} selectedTicker={selectedTicker} onSelectTicker={onSelectTicker} />
             ) : selectedEntry ? (
-              /* Case C: non-brief single-ticker (quick_check, deep_dive) — entry snapshot */
+              /* Case C: single-ticker — entry snapshot with mode-specific extras */
               <div className="border-b border-[var(--color-border)] px-4 py-3">
-                {/* Verdict row */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <VerdictBadge verdict={selectedEntry.verdict} size="sm" />
                   {selectedEntry.confidence ? (
@@ -1657,11 +2206,23 @@ function ReportCard({
                     </span>
                   ) : null}
                 </div>
+                {/* Quick check: news headline inline */}
+                {item.mode === "quick_check" && selectedEntry.newsHeadline ? (
+                  <p className="mt-2 text-[11px] leading-snug text-[var(--color-fg-muted)] line-clamp-2">
+                    📰 {selectedEntry.newsHeadline}
+                  </p>
+                ) : null}
+                {/* Deep dive: debate resolution teaser */}
+                {item.mode === "deep_dive" && selectedEntry.debateResolution ? (
+                  <p className="mt-2 text-[11px] leading-snug text-sky-300 line-clamp-2">
+                    ⚖ {selectedEntry.debateResolution}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
-            {/* Analyst reports — non-brief modes only */}
-            {visibleTabs.length > 0 && !isBriefMode ? (
+            {/* Analyst reports — non-table modes only */}
+            {visibleTabs.length > 0 && !isTableMode ? (
               <div>
                 {/* Section label + tab bar */}
                 <div className="px-4 pt-3">
@@ -1703,7 +2264,7 @@ function ReportCard({
         </div>
       ) : null}
 
-      {/* Ticker detail modal — brief mode drill-in */}
+      {/* Ticker detail modal — concise for daily_brief, full analyst tabs for full_report/deep_dive */}
       {modalTicker ? (
         <TickerDetailModal
           item={item}
@@ -1867,7 +2428,7 @@ export function Reports() {
                 setSearch(e.target.value);
                 setPage(1);
               }}
-              placeholder="Search ticker, verdict, reasoning…"
+              placeholder="Search ticker, verdict, confidence…"
               className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3.5 py-2.5 text-sm text-[var(--color-fg-default)] outline-none transition-colors focus:border-[var(--color-accent-blue)] placeholder:text-[var(--color-fg-subtle)]"
             />
 
